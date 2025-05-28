@@ -8,7 +8,7 @@ from .utils import synth
 
 def test_synth_demo():
     demo = DemoAxi(32, 16)
-    synth(demo, ports=list(core.axilite.fields.values()))
+    synth(demo, ports=list(demo.axilite.fields.values()))
 
 
 def test_synth_axi2axilite():
