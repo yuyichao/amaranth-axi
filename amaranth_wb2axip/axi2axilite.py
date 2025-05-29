@@ -1,10 +1,14 @@
-from amaranth import Elaboratable, Instance, ClockSignal, ResetSignal, Module
-from amaranth.build.plat import Platform
-from .interfaces import AxiSlave, AxiLiteMaster
-from .utils import get_ports_for_instance, add_verilog_file
+#
+
+from amaranth import Instance, ClockSignal, ResetSignal, Module
+from amaranth.lib import wiring
+from amaranth.lib.wiring import In, Out
+
+from .interfaces import AXI4, AXI4Lite
+from .utils import add_verilog_file
 
 
-class Axi2AxiLite(Elaboratable):
+class AXI2AXILite(wiring.Component):
     DEPENDENCIES = ['axi2axilite.v', 'skidbuffer.v', 'axi_addr.v', 'sfifo.v']
 
     def __init__(self, data_w, addr_w, id_w, domain='sync'):
@@ -12,22 +16,24 @@ class Axi2AxiLite(Elaboratable):
         self.addr_w = addr_w
         self.id_w = id_w
         self.domain = domain
-        self.axilite = AxiLiteMaster(data_w, addr_w, name='M_AXI')
-        self.axi = AxiSlave(data_w, addr_w, id_w, user_w=0, name='S_AXI')
+        super().__init__({
+            'axilite': Out(AXI4Lite(data_w, addr_w)),
+            'axi': In(AXI4(data_w, addr_w, id_w)),
+        })
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.axi2axil_i = Instance(
             'axi2axilite',
             p_C_AXI_ID_WIDTH=self.id_w,
-	        p_C_AXI_DATA_WIDTH=self.data_w,
-	        p_C_AXI_ADDR_WIDTH=self.addr_w,
+            p_C_AXI_DATA_WIDTH=self.data_w,
+            p_C_AXI_ADDR_WIDTH=self.addr_w,
             i_S_AXI_ACLK=ClockSignal(self.domain),
             i_S_AXI_ARESETN=~ResetSignal(self.domain),
-            **get_ports_for_instance(self.axi, prefix='S_AXI_'),
-            **get_ports_for_instance(self.axilite, prefix='M_AXI_'),
+            **self.axi.get_ports_for_instance(prefix='S_AXI_'),
+            **self.axilite.get_ports_for_instance(prefix='M_AXI_'),
         )
-        if isinstance(platform, Platform):
+        if platform is not None:
             for d in self.DEPENDENCIES:
                 add_verilog_file(platform, d)
         return m
@@ -35,7 +41,5 @@ class Axi2AxiLite(Elaboratable):
 
 if __name__ == '__main__':
     from amaranth.cli import main
-    core = Axi2AxiLite(32, 8, 5)
-    ports = [v for v in core.axi.fields.values()]
-    ports += [v for v in core.axilite.fields.values()]
-    main(core, None, ports=ports)
+    core = AXI2AXILite(32, 8, 5)
+    main(core, None, ports=core.axi.all_ports + core.axilite.all_ports)

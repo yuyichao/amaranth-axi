@@ -1,43 +1,46 @@
+#
+
 from math import ceil, log2
+
 from amaranth import *
-from amaranth.build.plat import Platform
-from .interfaces import AxiLiteSlave, AxiLiteMaster
-from .utils import get_ports_for_instance, add_verilog_file
+from amaranth.lib import wiring
+from amaranth.lib.wiring import In, Out
+
+from .interfaces import AXI4Lite
+from .utils import add_verilog_file
 
 def length_to_mask(length, width):
     return (~int('1' * ceil(log2(length)), 2)) &  int('1' * width, 2)
 
-class AxiLiteXBar(Elaboratable):
+class AXILiteXBar(Elaboratable):
     DEPENDENCIES = ['axilxbar.v', 'addrdecode.v', 'skidbuffer.v']
 
     def __init__(self, data_w, addr_w, domain='sync'):
         self.domain = domain
         self.data_w = data_w
         self.addr_w = addr_w
+        self.master_sig = AXI4Lite(data_w, addr_w)
+        self.slave_sig = self.master_sig.flip()
         self.slaves = []
         self.masters = []
 
     def add_slave(self, slave, addr, length):
-        assert isinstance(slave, AxiLiteSlave)
+        assert self.slave_sig.is_compliant(slave)
         self.slaves.append((slave, addr, length))
 
     def add_master(self, master):
-        assert isinstance(master, AxiLiteMaster)
+        assert self.master_sig.is_compliant(master)
         self.masters.append(master)
 
     def get_instance_ports(self):
-        def get_ports(interface, prefix):
-            if isinstance(interface, AxiLiteMaster):
-                new_type = AxiLiteSlave
-            else:
-                new_type = AxiLiteMaster
-            new_interface = new_type(self.data_w, self.addr_w, fields=interface.fields)
-            return get_ports_for_instance(new_interface, prefix=prefix)
-
-        ports = [get_ports(slave, prefix='M_AXI_') for slave, a, l in self.slaves]
+        ports = [self.master_sig.get_port_for_instance(wiring.flipped(slave),
+                                                       prefix='M_AXI_')
+                 for slave, a, l in self.slaves]
         slave_ports = {k: Cat([s[k] for s in ports]) for k in ports[0].keys()}
 
-        ports = [get_ports(master, prefix='S_AXI_') for master in self.masters]
+        ports = [self.slave_sig.get_port_for_instance(wiring.flipped(master),
+                                                      prefix='S_AXI_')
+                 for master in self.masters]
         master_ports = {k: Cat([s[k] for s in ports]) for k in ports[0].keys()}
         return {**slave_ports, **master_ports}
 
@@ -70,7 +73,7 @@ class AxiLiteXBar(Elaboratable):
             **self.get_instance_ports(),
         )
 
-        if isinstance(platform, Platform):
+        if platform is not None:
             for d in self.DEPENDENCIES:
                 add_verilog_file(platform, d)
 
@@ -79,20 +82,19 @@ class AxiLiteXBar(Elaboratable):
 if __name__ == '__main__':
     from amaranth.cli import main
 
-    xbar = AxiLiteXBar(32, 16)
-    slave1 = AxiLiteSlave(32, 16, name='slave1')
-    slave2 = AxiLiteSlave(32, 16, name='slave2')
-    master1 = AxiLiteMaster(32, 16, name='master1')
-    master2 = AxiLiteMaster(32, 16, name='master2')
+    xbar = AXILiteXBar(32, 16)
+    slave1 = xbar.slave_sig.create()
+    slave2 = xbar.slave_sig.create()
+    master1 = xbar.master_sig.create()
+    master2 = xbar.master_sig.create()
     xbar.add_slave(slave1, 0x8000, 0x1000)
     xbar.add_slave(slave2, 0x9000, 0x1000)
     xbar.add_master(master1)
     xbar.add_master(master2)
 
-    ports = [v for v in slave1.fields.values()]
-    ports += [v for v in slave2.fields.values()]
-    ports += [v for v in master1.fields.values()]
-    ports += [v for v in master2.fields.values()]
-    main(xbar, None, ports=ports)
-
-
+    ports = [signal for path, _, signal in xbar.slave_sig.flatten(slave1)]
+    ports += [signal for path, _, signal in xbar.slave_sig.flatten(slave2)]
+    ports += [signal for path, _, signal in xbar.master_sig.flatten(master1)]
+    ports += [signal for path, _, signal in xbar.master_sig.flatten(master2)]
+    main(xbar, None, ports=(slave1.all_ports + slave2.all_ports +
+                            master1.all_ports + master2.all_ports))
