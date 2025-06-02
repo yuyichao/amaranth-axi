@@ -2,7 +2,7 @@ from amaranth import Module
 from amaranth_wb2axip.demoaxi import DemoAXI
 from amaranth_wb2axip.axi2axilite import AXI2AXILite
 from amaranth_wb2axip.axilxbar import AXILiteXBar
-from amaranth_wb2axip.interfaces import *
+from amaranth_wb2axip.axibus import *
 from .utils import synth
 
 

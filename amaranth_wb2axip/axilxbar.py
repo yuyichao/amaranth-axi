@@ -6,7 +6,7 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from .interfaces import AXI4Lite
+from .axibus import AXI4Lite
 from .utils import add_verilog_file
 
 def length_to_mask(length, width):

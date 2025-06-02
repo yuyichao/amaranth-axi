@@ -4,7 +4,7 @@ from amaranth import Instance, ClockSignal, ResetSignal, Module
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from .interfaces import AXI4, AXI4Lite
+from .axibus import AXI4, AXI4Lite
 from .utils import add_verilog_file
 
 
