@@ -146,7 +146,7 @@ class Interface(wiring.PureInterface):
             return port
         if isinstance(port, Const):
             return Const(port.value, width)
-        new_port = Signal(width, name + '_cast')
+        new_port = Signal(width, name=name + '_cast')
         min_w = min(width, orig_w)
         if is_slave:
             m.d.comb += port[:min_w].eq(new_port[:min_w])
@@ -174,7 +174,7 @@ class Interface(wiring.PureInterface):
         new_iface = sig.create(src_loc_at=src_loc_at + 1)
         for name in sig.members.keys():
             if (name == 'ARUSER' or name == 'AWUSER') and old_sig.user_width == 0:
-                port = Signal(0)
+                port = Signal(0, name=name + '_dummy')
             else:
                 port = getattr(self, name)
             if name == 'ARADDR' or name == 'AWADDR':
