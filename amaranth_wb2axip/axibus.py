@@ -78,7 +78,10 @@ class Signature(wiring.Signature):
                         "AWUSER": Out(user_width),
                         # "BUSER": In(user_width)
                     })
-            # Ignore AXI3-only WID signal.
+            else:
+                pins.update({
+                    "WID": Out(id_width),
+                })
         super().__init__(pins)
 
     def __repr__(self):
