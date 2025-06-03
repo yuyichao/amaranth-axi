@@ -140,7 +140,23 @@ class Interface(wiring.PureInterface):
     def all_ports(self):
         return [signal for path, _, signal in self.signature.flatten(self)]
 
-    def cast(self, addr_width=None, user_width=None, src_loc_at=0):
+    def _cast_signal(self, m, name, port, width, is_slave):
+        orig_w = len(port)
+        if orig_w == width:
+            return port
+        if isinstance(port, Const):
+            return Const(port.value, width)
+        new_port = Signal(width, name + '_cast')
+        min_w = min(width, orig_w)
+        if is_slave:
+            m.d.comb += port[:min_w].eq(new_port[:min_w])
+        else:
+            m.d.comb += port[:min_w].eq(port[:min_w])
+            if width > min_w:
+                m.d.comb += new_port[min_w:].eq(Const(0, width - min_w))
+        return new_port
+
+    def cast(self, m, addr_width=None, user_width=None, src_loc_at=0):
         old_sig = self.signature
         if user_width is None:
             user_width = old_sig.user_width
@@ -162,17 +178,9 @@ class Interface(wiring.PureInterface):
             else:
                 port = getattr(self, name)
             if name == 'ARADDR' or name == 'AWADDR':
-                nextra = addr_width - len(port)
-                if nextra < 0:
-                    port = port[:addr_width]
-                elif nextra > 0:
-                    port = Cat(Signal(nextra) if is_slave else Const(0, nextra), port)
+                port = self._cast_signal(m, name, port, addr_width, is_slave)
             elif name == 'ARUSER' or name == 'AWUSER':
-                nextra = user_width - len(port)
-                if nextra < 0:
-                    port = port[:user_width]
-                elif nextra > 0:
-                    port = Cat(Signal(nextra) if is_slave else Const(0, nextra), port)
+                port = self._cast_signal(m, name, port, user_width, is_slave)
             setattr(new_iface, name, port)
         return new_iface
 
