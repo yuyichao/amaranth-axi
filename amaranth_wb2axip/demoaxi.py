@@ -11,20 +11,20 @@ from .utils import add_verilog_file
 class DemoAXI(wiring.Component):
     DEPENDENCIES = ['demoaxi.v']
 
-    def __init__(self, data_w, addr_w, domain='sync'):
-        self.data_w = data_w
-        self.addr_w = addr_w
+    def __init__(self, data_width, addr_width, domain='sync'):
+        self.data_width = data_width
+        self.addr_width = addr_width
         self.domain = domain
         super().__init__({
-            'axilite': In(AXI4Lite(data_w, addr_w)),
+            'axilite': In(AXI4Lite(data_width, addr_width)),
         })
 
     def elaborate(self, platform):
         m = Module()
         m.submodules.demoaxi_i = Instance(
             'demoaxi',
-            p_C_S_AXI_DATA_WIDTH=self.data_w,
-            p_C_S_AXI_ADDR_WIDTH=self.addr_w,
+            p_C_S_AXI_DATA_WIDTH=self.data_width,
+            p_C_S_AXI_ADDR_WIDTH=self.addr_width,
             i_S_AXI_ACLK=ClockSignal(self.domain),
             i_S_AXI_ARESETN=~ResetSignal(self.domain),
             **self.axilite.get_ports_for_instance(prefix='S_AXI_'),

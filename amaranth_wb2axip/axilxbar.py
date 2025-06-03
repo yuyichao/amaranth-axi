@@ -15,11 +15,11 @@ def length_to_mask(length, width):
 class AXILiteXBar(Elaboratable):
     DEPENDENCIES = ['axilxbar.v', 'addrdecode.v', 'skidbuffer.v']
 
-    def __init__(self, data_w, addr_w, domain='sync'):
+    def __init__(self, data_width, addr_width, domain='sync'):
         self.domain = domain
-        self.data_w = data_w
-        self.addr_w = addr_w
-        self.master_sig = AXI4Lite(data_w, addr_w)
+        self.data_width = data_width
+        self.addr_width = addr_width
+        self.master_sig = AXI4Lite(data_width, addr_width)
         self.slave_sig = self.master_sig.flip()
         self.slaves = []
         self.masters = []
@@ -45,7 +45,7 @@ class AXILiteXBar(Elaboratable):
         return {**slave_ports, **master_ports}
 
     def cat_addresses(self, addresses):
-        fmt = '{{:0{}b}}'.format(self.addr_w)
+        fmt = '{{:0{}b}}'.format(self.addr_width)
         return int(''.join([fmt.format(a) for a in addresses[::-1]]), 2)
 
     def elaborate(self, platform):
@@ -55,16 +55,16 @@ class AXILiteXBar(Elaboratable):
         nm = len(self.masters)
 
         addresses = [a for s, a, l in self.slaves]
-        masks = [length_to_mask(l, self.addr_w) for s, a, l in self.slaves]
+        masks = [length_to_mask(l, self.addr_width) for s, a, l in self.slaves]
 
         m.submodules.axilxbar_i = Instance(
             'axilxbar',
-            p_C_AXI_DATA_WIDTH = self.data_w,
-            p_C_AXI_ADDR_WIDTH = self.addr_w,
+            p_C_AXI_DATA_WIDTH = self.data_width,
+            p_C_AXI_ADDR_WIDTH = self.addr_width,
             p_NM = nm,
             p_NS = ns,
-            p_SLAVE_ADDR = Const(self.cat_addresses(addresses), ns * self.addr_w),
-            p_SLAVE_MASK = Const(self.cat_addresses(masks), ns * self.addr_w),
+            p_SLAVE_ADDR = Const(self.cat_addresses(addresses), ns * self.addr_width),
+            p_SLAVE_MASK = Const(self.cat_addresses(masks), ns * self.addr_width),
             p_OPT_LOWPOWER = 1,
             p_OPT_LINGER = 4,
             p_LGMAXBURST = 5,
