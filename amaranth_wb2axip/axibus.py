@@ -1,5 +1,6 @@
 #
 
+from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
@@ -116,6 +117,14 @@ class Signature(wiring.Signature):
     def is_lite(self):
         return self._lite
 
+    @property
+    def is_master(self):
+        return not isinstance(self, wiring.FlippedSignature)
+
+    @property
+    def is_slave(self):
+        return isinstance(self, wiring.FlippedSignature)
+
     def create(self, *, path=None, src_loc_at=0):
         return Interface(self, path=path, src_loc_at=src_loc_at + 1)
 
@@ -131,8 +140,41 @@ class Interface(wiring.PureInterface):
     def all_ports(self):
         return [signal for path, _, signal in self.signature.flatten(self)]
 
-    def connect(self):
-        pass
+    def cast(self, addr_width=None, user_width=None, src_loc_at=0):
+        old_sig = self.signature
+        if user_width is None:
+            user_width = old_sig.user_width
+        elif user_width != 0:
+            assert old_sig.axi_version == 4 and not old_sig.is_lite
+        if addr_width is None:
+            addr_width = old_sig.addr_width
+        if addr_width == old_sig.addr_width and user_width == old_sig.user_width:
+            return self
+        sig = Signature(old_sig.data_width, addr_width, old_sig.id_width, user_width,
+                        version=old_sig.axi_version, lite=old_sig.is_lite)
+        is_slave = old_sig.is_slave
+        if is_slave:
+            sig = sig.flip()
+        new_iface = sig.create(src_loc_at=src_loc_at + 1)
+        for name in sig.members.keys():
+            if (name == 'ARUSER' or name == 'AWUSER') and old_sig.user_width == 0:
+                port = Signal(0)
+            else:
+                port = getattr(self, name)
+            if name == 'ARADDR' or name == 'AWADDR':
+                nextra = addr_width - len(port)
+                if nextra < 0:
+                    port = port[:addr_width]
+                elif nextra > 0:
+                    port = Cat(Signal(nextra) if is_slave else Const(0, nextra), port)
+            elif name == 'ARUSER' or name == 'AWUSER':
+                nextra = user_width - len(port)
+                if nextra < 0:
+                    port = port[:user_width]
+                elif nextra > 0:
+                    port = Cat(Signal(nextra) if is_slave else Const(0, nextra), port)
+            setattr(new_iface, name, port)
+        return new_iface
 
 def AXI3(data_width, addr_width, id_width):
     return Signature(data_width, addr_width, id_width, 0, version=3, lite=False)
