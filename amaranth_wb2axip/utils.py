@@ -1,10 +1,10 @@
 #
 
-from urllib import request
+from pathlib import Path
+
+rtl_dir = Path(__file__).parent / "rtl"
 
 def add_verilog_file(plat, file_name):
-    URL_FMT = "https://raw.githubusercontent.com/ZipCPU/wb2axip/master/rtl/{}"
     if file_name not in plat.extra_files:
-        url = URL_FMT.format(file_name)
-        content = request.urlopen(url).read()
-        plat.add_file(file_name, content)
+        with (rtl_dir / file_name).open('rb') as f:
+            plat.add_file(file_name, f.read())

@@ -26,4 +26,7 @@ setup(
         "amaranth",
     ],
     packages=find_packages(exclude=["*.test*"]),
+    package_data={
+        'amaranth_wb2axip': ['rtl/*']
+    }
 )
