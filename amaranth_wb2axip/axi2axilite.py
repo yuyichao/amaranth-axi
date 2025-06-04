@@ -11,11 +11,16 @@ from .utils import add_verilog_file
 class AXI2AXILite(wiring.Component):
     DEPENDENCIES = ['axi2axilite.v', 'skidbuffer.v', 'axi_addr.v', 'sfifo.v']
 
-    def __init__(self, data_width, addr_width, id_width, domain='sync'):
+    def __init__(self, data_width, addr_width, id_width, domain='sync', *,
+                 writes=True, reads=True, lowpower=False, lgfifo=4):
         self.data_width = data_width
         self.addr_width = addr_width
         self.id_width = id_width
         self.domain = domain
+        self.writes = writes
+        self.reads = reads
+        self.lowpower = lowpower
+        self.lgfifo = lgfifo
         super().__init__({
             'axilite': Out(AXI4Lite(data_width, addr_width)),
             'axi': In(AXI4(data_width, addr_width, id_width)),
@@ -28,6 +33,10 @@ class AXI2AXILite(wiring.Component):
             p_C_AXI_ID_WIDTH=self.id_width,
             p_C_AXI_DATA_WIDTH=self.data_width,
             p_C_AXI_ADDR_WIDTH=self.addr_width,
+            p_OPT_WRITES=self.writes,
+            p_OPT_READS=self.reads,
+            p_OPT_LOWPOWER=self.lowpower,
+            p_LGFIFO=self.lgfifo,
             i_S_AXI_ACLK=ClockSignal(self.domain),
             i_S_AXI_ARESETN=~ResetSignal(self.domain),
             **self.axi.get_ports_for_instance(prefix='S_AXI_'),

@@ -15,10 +15,14 @@ def length_to_mask(length, width):
 class AXILiteXBar(Elaboratable):
     DEPENDENCIES = ['axilxbar.v', 'addrdecode.v', 'skidbuffer.v']
 
-    def __init__(self, data_width, addr_width, domain='sync'):
+    def __init__(self, data_width, addr_width, domain='sync', *,
+                 lowpower=False, linger=4, lgmaxburst=5):
         self.domain = domain
         self.data_width = data_width
         self.addr_width = addr_width
+        self.lowpower = lowpower
+        self.linger = linger
+        self.lgmaxburst = lgmaxburst
         self.master_sig = AXI4Lite(data_width, addr_width)
         self.slave_sig = self.master_sig.flip()
         self.slaves = []
@@ -65,9 +69,9 @@ class AXILiteXBar(Elaboratable):
             p_NS = ns,
             p_SLAVE_ADDR = Const(self.cat_addresses(addresses), ns * self.addr_width),
             p_SLAVE_MASK = Const(self.cat_addresses(masks), ns * self.addr_width),
-            p_OPT_LOWPOWER = 1,
-            p_OPT_LINGER = 4,
-            p_LGMAXBURST = 5,
+            p_OPT_LOWPOWER = self.lowpower,
+            p_OPT_LINGER = self.linger,
+            p_LGMAXBURST = self.lgmaxburst,
             i_S_AXI_ACLK = ClockSignal(self.domain),
             i_S_AXI_ARESETN = ~ResetSignal(self.domain),
             **self.get_instance_ports(),
