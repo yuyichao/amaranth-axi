@@ -88,7 +88,7 @@ class Signature(wiring.Signature):
         return f'axibus.Signature({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width}, version={self._version}, lite={self._lite})'
 
     def __eq__(self, other):
-        return (isinstance(other, Signature) and
+        return (type(self) is type(other) and
                 self._data_width == other._data_width and
                 self._addr_width == other._addr_width and
                 self._id_width == other._id_width and
