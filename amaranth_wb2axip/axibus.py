@@ -202,3 +202,89 @@ def AXI4(data_width, addr_width, id_width, user_width=0):
 
 def AXI4Lite(data_width, addr_width):
     return AXI(data_width, addr_width, 0, 0, version=4, lite=True)
+
+class ACE(_Base):
+    class Interface(_Base.Interface):
+        pass
+
+    def __init__(self, data_width, addr_width, id_width, user_width=0, *, lite):
+        self._data_width = data_width
+        self._addr_width = addr_width
+        self._id_width = id_width
+        self._user_width = user_width
+        self._lite = lite
+        ports = _get_axi_ports(data_width, addr_width, id_width, user_width,
+                               2 if lite else 4, 4, False)
+        ports.update({
+            'ARSNOOP': Out(4),
+            'ARDOMAIN': Out(2),
+            'ARBAR': Out(2),
+
+            'AWSNOOP': Out(3),
+            'AWDOMAIN': Out(2),
+            'AWBAR': Out(2),
+        })
+        if not lite:
+            ports.update({
+                'ACVALID': In(1),
+                'ACREADY': Out(1),
+                'ACADDR': In(addr_width),
+                'ACSNOOP': In(4),
+                'ACPROT': In(3),
+
+                'CRVALID': Out(1),
+                'CRREADY': In(1),
+                'CRRESP': Out(5),
+
+                'CDVALID': Out(1),
+                'CDREADY': In(1),
+                'CDDATA': Out(data_width),
+                'CDLast': Out(1),
+
+                'RACK': Out(1),
+                'WACK': Out(1),
+            })
+        super().__init__(ports)
+
+    def __repr__(self):
+        return f'axibus.ACE({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width}, lite={self._lite})'
+
+    def __eq__(self, other):
+        return (type(self) is type(other) and
+                self._data_width == other._data_width and
+                self._addr_width == other._addr_width and
+                self._id_width == other._id_width and
+                self._user_width == other._user_width and
+                self._lite == other._lite)
+
+    @property
+    def data_width(self):
+        return self._data_width
+
+    @property
+    def addr_width(self):
+        return self._addr_width
+
+    @property
+    def id_width(self):
+        return self._id_width
+
+    @property
+    def user_width(self):
+        return self._user_width
+
+    @property
+    def axi_version(self):
+        return 4
+
+    @property
+    def is_lite(self):
+        return self._lite
+
+    @property
+    def is_master(self):
+        return not isinstance(self, wiring.FlippedSignature)
+
+    @property
+    def is_slave(self):
+        return isinstance(self, wiring.FlippedSignature)
