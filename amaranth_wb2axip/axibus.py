@@ -74,7 +74,7 @@ def _get_axi_ports(data_width, addr_width, id_width, user_width,
             })
     return pins
 
-class AXI(wiring.Signature):
+class _Base(wiring.Signature):
     class Interface(wiring.PureInterface):
         def get_ports_for_instance(self, prefix=''):
             return self.signature.get_port_for_instance(self, prefix)
@@ -83,6 +83,15 @@ class AXI(wiring.Signature):
         def all_ports(self):
             return [signal for path, _, signal in self.signature.flatten(self)]
 
+    def create(self, *, path=None, src_loc_at=0):
+        return self.Interface(self, path=path, src_loc_at=src_loc_at + 1)
+
+    def get_port_for_instance(self, iface, prefix=''):
+        return {('i_' if port.flow is In else 'o_') + prefix + name: getattr(iface, name)
+                for name, port in self.members.items()}
+
+class AXI(_Base):
+    class Interface(_Base.Interface):
         def _cast_signal(self, m, name, port, width, is_slave):
             orig_w = len(port)
             if orig_w == width:
@@ -184,13 +193,6 @@ class AXI(wiring.Signature):
     @property
     def is_slave(self):
         return isinstance(self, wiring.FlippedSignature)
-
-    def create(self, *, path=None, src_loc_at=0):
-        return AXI.Interface(self, path=path, src_loc_at=src_loc_at + 1)
-
-    def get_port_for_instance(self, iface, prefix=''):
-        return {('i_' if port.flow is In else 'o_') + prefix + name: getattr(iface, name)
-                for name, port in self.members.items()}
 
 def AXI3(data_width, addr_width, id_width):
     return AXI(data_width, addr_width, id_width, 0, version=3, lite=False)
