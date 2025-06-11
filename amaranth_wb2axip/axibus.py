@@ -203,6 +203,41 @@ def AXI4(data_width, addr_width, id_width, user_width=0):
 def AXI4Lite(data_width, addr_width):
     return AXI(data_width, addr_width, 0, 0, version=4, lite=True)
 
+class AXI4Stream(_Base):
+    class Interface(_Base.Interface):
+        pass
+
+    def __init__(self, data_width):
+        self._data_width = data_width
+        super().__init__({
+            'TREADY': In(1),
+            'TVALID': Out(1),
+            'TDATA': Out(data_width),
+            'TLAST': Out(1),
+        })
+
+    def __repr__(self):
+        return f'axibus.AXI4Stream({self._data_width})'
+
+    def __eq__(self, other):
+        return (type(self) is type(other) and self._data_width == other._data_width)
+
+    @property
+    def data_width(self):
+        return self._data_width
+
+    @property
+    def axi_version(self):
+        return 4
+
+    @property
+    def is_master(self):
+        return not isinstance(self, wiring.FlippedSignature)
+
+    @property
+    def is_slave(self):
+        return isinstance(self, wiring.FlippedSignature)
+
 class ACE(_Base):
     class Interface(_Base.Interface):
         pass
