@@ -5,7 +5,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from .axibus import AXI4
-from .utils import add_verilog_file
+from .utils import add_verilog_files
 
 
 class AXIXClk(wiring.Component):
@@ -45,9 +45,7 @@ class AXIXClk(wiring.Component):
             **self.saxi.get_ports_for_instance(prefix='S_AXI_'),
             **self.maxi.get_ports_for_instance(prefix='M_AXI_'),
         )
-        if platform is not None:
-            for d in self.DEPENDENCIES:
-                add_verilog_file(platform, d)
+        add_verilog_files(platform, self.DEPENDENCIES)
         return m
 
 

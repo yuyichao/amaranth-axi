@@ -5,7 +5,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from .axibus import AXI4, AXI4Lite
-from .utils import add_verilog_file
+from .utils import add_verilog_files
 
 
 class AXI2AXILite(wiring.Component):
@@ -42,9 +42,7 @@ class AXI2AXILite(wiring.Component):
             **self.axi.get_ports_for_instance(prefix='S_AXI_'),
             **self.axilite.get_ports_for_instance(prefix='M_AXI_'),
         )
-        if platform is not None:
-            for d in self.DEPENDENCIES:
-                add_verilog_file(platform, d)
+        add_verilog_files(platform, self.DEPENDENCIES)
         return m
 
 

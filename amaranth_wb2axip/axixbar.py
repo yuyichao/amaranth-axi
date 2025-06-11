@@ -7,7 +7,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from .axibus import AXI4
-from .utils import add_verilog_file
+from .utils import add_verilog_files
 
 def length_to_mask(length, width):
     return (~int('1' * ceil(log2(length)), 2)) &  int('1' * width, 2)
@@ -80,11 +80,7 @@ class AXIXBar(Elaboratable):
             i_S_AXI_ARESETN = ~ResetSignal(self.domain),
             **self.get_instance_ports(),
         )
-
-        if platform is not None:
-            for d in self.DEPENDENCIES:
-                add_verilog_file(platform, d)
-
+        add_verilog_files(platform, self.DEPENDENCIES)
         return m
 
 if __name__ == '__main__':
