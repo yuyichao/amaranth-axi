@@ -151,7 +151,16 @@ class AXI(_Base):
                          2, version, lite))
 
     def __repr__(self):
-        return f'axibus.AXI({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width}, version={self._version}, lite={self._lite})'
+        if self._version == 4:
+            if self._lite:
+                assert self._id_width == 0
+                assert self._user_width == 0
+                return f'axibus.AXI4Lite({self._data_width}, {self._addr_width})'
+            return f'axibus.AXI4({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width})'
+        assert self._version == 3
+        assert not self._lite
+        assert self._user_width == 0
+        return f'axibus.AXI3({self._data_width}, {self._addr_width}, {self._id_width})'
 
     def __eq__(self, other):
         return (type(self) is type(other) and
