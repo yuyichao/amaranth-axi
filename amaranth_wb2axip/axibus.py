@@ -283,7 +283,7 @@ class ACE(_Base):
                 'CDVALID': Out(1),
                 'CDREADY': In(1),
                 'CDDATA': Out(data_width),
-                'CDLast': Out(1),
+                'CDLAST': Out(1),
 
                 'RACK': Out(1),
                 'WACK': Out(1),
