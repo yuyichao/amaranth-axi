@@ -251,7 +251,7 @@ class ACE(_Base):
     class Interface(_Base.Interface):
         pass
 
-    def __init__(self, data_width, addr_width, id_width, user_width=0, *, lite):
+    def __init__(self, data_width, addr_width, id_width, user_width=0, *, lite=False):
         self._data_width = data_width
         self._addr_width = addr_width
         self._id_width = id_width
@@ -291,7 +291,9 @@ class ACE(_Base):
         super().__init__(ports)
 
     def __repr__(self):
-        return f'axibus.ACE({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width}, lite={self._lite})'
+        if self._lite:
+            return f'axibus.ACELite({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width})'
+        return f'axibus.ACE({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width})'
 
     def __eq__(self, other):
         return (type(self) is type(other) and
@@ -332,3 +334,6 @@ class ACE(_Base):
     @property
     def is_slave(self):
         return isinstance(self, wiring.FlippedSignature)
+
+def ACELite(data_width, addr_width, id_width, user_width=0):
+    return ACE(data_width, addr_width, id_width, user_width, lite=True)
