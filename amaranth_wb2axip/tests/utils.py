@@ -28,7 +28,7 @@ def synth(core, ports):
         for file_name, content in plat.extra_files.items():
             with open(temp_dir + '/' + file_name, 'wb') as f:
                 f.write(content)
-            yosys_cmd += "read_verilog {}\n".format(file_name)
+            yosys_cmd += "read_verilog -sv {}\n".format(file_name)
         yosys_cmd += 'read_rtlil {}\n'.format('top.il')
         yosys_cmd += 'synth_xilinx -top top\n'
 

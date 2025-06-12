@@ -72,6 +72,11 @@ def test_synth_axi32axi():
     synth(core, ports=core.axi3.all_ports + core.axi.all_ports)
 
 
+def test_synth_axi2axi3():
+    core = AXI2AXI3(32, 64, 8)
+    synth(core, ports=core.axi3.all_ports + core.axi.all_ports)
+
+
 def test_synth_realcase():
     m = Module()
     m.submodules.axi2axil = axi2axil = AXI2AXILite(32, 16, 5)
