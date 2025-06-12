@@ -62,6 +62,11 @@ def test_synth_axisswitch():
     synth(core, ports)
 
 
+def test_synth_axilupsz():
+    core = AXILUpSz(32, 64, 8)
+    synth(core, ports=core.saxilite.all_ports + core.maxilite.all_ports)
+
+
 def test_synth_realcase():
     m = Module()
     m.submodules.axi2axil = axi2axil = AXI2AXILite(32, 16, 5)
