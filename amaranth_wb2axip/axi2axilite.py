@@ -13,10 +13,10 @@ class AXI2AXILite(wiring.Component):
                     'axi_addr.v', 'sfifo.v']
 
     def __init__(self, data_width, addr_width, id_width, domain='sync', *,
-                 sdata_width=None, writes=True, reads=True, lowpower=False, lgfifo=4):
+                 ldata_width=None, writes=True, reads=True, lowpower=False, lgfifo=4):
         self.data_width = data_width
-        self.sdata_width = data_width if sdata_width is None else sdata_width
-        assert self.sdata_width <= self.data_width
+        self.ldata_width = data_width if ldata_width is None else ldata_width
+        assert self.ldata_width <= self.data_width
         self.addr_width = addr_width
         self.id_width = id_width
         self.domain = domain
@@ -25,13 +25,13 @@ class AXI2AXILite(wiring.Component):
         self.lowpower = lowpower
         self.lgfifo = lgfifo
         super().__init__({
-            'axilite': Out(AXI4Lite(self.sdata_width, addr_width)),
+            'axilite': Out(AXI4Lite(self.ldata_width, addr_width)),
             'axi': In(AXI4(data_width, addr_width, id_width)),
         })
 
     def elaborate(self, platform):
         m = Module()
-        if self.sdata_width == self.data_width:
+        if self.ldata_width == self.data_width:
             m.submodules.axi2axil_i = Instance(
                 'axi2axilite',
                 p_C_AXI_ID_WIDTH=self.id_width,
@@ -50,8 +50,8 @@ class AXI2AXILite(wiring.Component):
             m.submodules.axi2axilsub_i = Instance(
                 'axi2axilsub',
                 p_C_AXI_ID_WIDTH=self.id_width,
-                p_C_AXI_M_DATA_WIDTH=self.data_width,
-                p_C_AXI_S_DATA_WIDTH=self.sdata_width,
+                p_C_S_AXI_DATA_WIDTH=self.data_width,
+                p_C_M_AXI_DATA_WIDTH=self.ldata_width,
                 p_C_AXI_ADDR_WIDTH=self.addr_width,
                 p_OPT_WRITES=self.writes,
                 p_OPT_READS=self.reads,

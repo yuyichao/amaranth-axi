@@ -31,12 +31,12 @@ class AXILite2AXI(wiring.Component):
             p_C_AXI_ID_WIDTH=self.id_width,
             p_C_AXI_DATA_WIDTH=self.data_width,
             p_C_AXI_ADDR_WIDTH=self.addr_width,
-            p_C_AXI_WRITE_D=self.write_id,
-            p_C_AXI_READ_D=self.read_id,
+            p_C_AXI_WRITE_ID=self.write_id,
+            p_C_AXI_READ_ID=self.read_id,
             i_ACLK=ClockSignal(self.domain),
             i_ARESETN=~ResetSignal(self.domain),
-            **self.axi.get_ports_for_instance(prefix='S_AXI_'),
-            **self.axilite.get_ports_for_instance(prefix='M_AXI_'),
+            **self.axi.get_ports_for_instance(prefix='M_AXI_'),
+            **self.axilite.get_ports_for_instance(prefix='S_AXI_'),
         )
         add_verilog_files(platform, self.DEPENDENCIES)
         return m

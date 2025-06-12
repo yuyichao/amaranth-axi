@@ -36,8 +36,8 @@ class AXISSwitch(wiring.Component):
         slave_ports = {k: Cat([s[k] for s in ports]) for k in ports[0].keys()}
         m.submodules.axisswitch_i = Instance(
             'axisswitch',
-            p_C_AXI_DATA_WIDTH=self.data_width,
-            p_C_AXIS_ADDR_WIDTH=self.addr_width,
+            p_C_AXIS_DATA_WIDTH=self.data_width,
+            p_C_AXI_ADDR_WIDTH=self.addr_width,
             p_OPT_LOWPOWER=self.lowpower,
             p_NUM_STREAMS=len(self.masters),
             i_S_AXI_ACLK=ClockSignal(self.domain),
