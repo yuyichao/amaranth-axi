@@ -1,16 +1,14 @@
 #
 
-from amaranth import Instance, ClockSignal, ResetSignal, Module
+from amaranth import *
+from amaranth.utils import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from .axibus import AXI4Lite
-from .utils import add_verilog_files
 
 
 class DemoAXI(wiring.Component):
-    DEPENDENCIES = ['demoaxi.v']
-
     def __init__(self, data_width, addr_width, domain='sync', *,
                  read_sideeffect=True):
         self.data_width = data_width
@@ -21,20 +19,70 @@ class DemoAXI(wiring.Component):
             'axilite': In(AXI4Lite(data_width, addr_width)),
         })
 
+    def latch_signal(self, m, val, ready):
+        cache = Signal(val.shape())
+        with m.If(ready):
+            m.d[self.domain] += cache.eq(val)
+        return Mux(ready, val, cache)
+
     def elaborate(self, platform):
         m = Module()
-        m.submodules.demoaxi_i = Instance(
-            'demoaxi',
-            p_C_S_AXI_DATA_WIDTH=self.data_width,
-            p_C_S_AXI_ADDR_WIDTH=self.addr_width,
-            p_OPT_READ_SIDEEFFECTS=self.read_sideeffect,
-            i_S_AXI_ACLK=ClockSignal(self.domain),
-            i_S_AXI_ARESETN=~ResetSignal(self.domain),
-            **self.axilite.get_ports_for_instance(prefix='S_AXI_'),
-        )
-        add_verilog_files(platform, self.DEPENDENCIES)
-        return m
 
+        idx_len = 6
+        addr_shift = ceil_log2(self.data_width // 8)
+        def addr2idx(addr):
+            return (addr >> addr_shift)[:idx_len]
+
+        axil = self.axilite
+        mem = Array([Signal(self.data_width) for _ in range(1 << idx_len)])
+
+        awready = Signal(init=1)
+        wready = Signal(init=1)
+        arready = Signal(init=1)
+        m.d.comb += [axil.AWREADY.eq(awready),
+                     axil.WREADY.eq(wready),
+                     axil.ARREADY.eq(arready),
+                     axil.BRESP.eq(0),
+                     axil.RRESP.eq(0)]
+
+        # Read
+        valid_read_request = axil.ARVALID | ~axil.ARREADY
+        read_response_stall = axil.RVALID  & ~axil.RREADY
+        rd_idx = addr2idx(self.latch_signal(m, axil.ARADDR, arready))
+
+        m.d[self.domain] += axil.RVALID.eq(read_response_stall | valid_read_request)
+        with m.If(~read_response_stall & ((not self.read_sideeffect) |
+                                          valid_read_request)):
+            m.d[self.domain] += axil.RDATA.eq(mem[rd_idx])
+        m.d[self.domain] += arready.eq(~read_response_stall | ~valid_read_request)
+
+        # Write
+        valid_write_address = axil.AWVALID | ~awready
+        valid_write_data = axil.WVALID  | ~wready
+        write_response_stall = axil.BVALID  & ~axil.BREADY
+        wr_idx = addr2idx(self.latch_signal(m, axil.AWADDR, awready))
+        wr_data = self.latch_signal(m, axil.WDATA, wready)
+        wr_strb = self.latch_signal(m, axil.WSTRB, wready)
+
+        with m.If(write_response_stall):
+            m.d[self.domain] += [awready.eq(~valid_write_address),
+                                 wready.eq(~valid_write_data)]
+        with m.Else():
+            m.d[self.domain] += [awready.eq(valid_write_data | ~valid_write_address),
+                                 wready.eq(valid_write_address | ~valid_write_data)]
+
+        with m.If(~write_response_stall & valid_write_address & valid_write_data):
+            word = mem[wr_idx];
+            for i in range(self.data_width // 8):
+                with m.If(wr_strb[i]):
+                    m.d[self.domain] += word[i * 8:i * 8 + 8].eq(wr_data[i * 8:i * 8 + 8])
+
+        with m.If(valid_write_address & valid_write_data):
+            m.d[self.domain] += axil.BVALID.eq(1)
+        with m.Elif(axil.BREADY):
+            m.d[self.domain] += axil.BVALID.eq(0)
+
+        return m
 
 if __name__ == '__main__':
     from amaranth.cli import main
