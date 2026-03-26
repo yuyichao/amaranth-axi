@@ -15,11 +15,11 @@ def scm_version():
 
 
 setup(
-    name="amaranth_wb2axip",
+    name="amaranth-axi",
     use_scm_version=scm_version(),
-    author="andresdemski",
-    author_email="andresdemski@gmail.com",
-    description="Amaranth wrapper for http://github.com/zipcpu/wb2axip cores",
+    author="Yichao Yu",
+    author_email="yyc1992@gmail.com",
+    description="Amaranth support for AXI bus",
     license="BSD",
     python_requires="~=3.6",
     install_requires=[
@@ -27,6 +27,6 @@ setup(
     ],
     packages=find_packages(exclude=["*.test*"]),
     package_data={
-        'amaranth_wb2axip': ['rtl/*']
+        'amaranth_axi': ['rtl/*']
     }
 )

@@ -1,5 +1,5 @@
 from amaranth import Module
-from amaranth_wb2axip import *
+from amaranth_axi import *
 from .utils import synth
 
 
