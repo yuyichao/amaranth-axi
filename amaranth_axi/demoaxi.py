@@ -6,6 +6,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from .axibus import AXI4Lite
+from .axitools import axi_write_reg
 
 
 class DemoAXI(wiring.Component):
@@ -72,10 +73,7 @@ class DemoAXI(wiring.Component):
                                  wready.eq(valid_write_address | ~valid_write_data)]
 
         with m.If(~write_response_stall & valid_write_address & valid_write_data):
-            word = mem[wr_idx];
-            for i in range(self.data_width // 8):
-                with m.If(wr_strb[i]):
-                    m.d[self.domain] += word[i * 8:i * 8 + 8].eq(wr_data[i * 8:i * 8 + 8])
+            axi_write_reg(m, mem[wr_idx], wr_data, wr_strb, domain=self.domain)
 
         with m.If(valid_write_address & valid_write_data):
             m.d[self.domain] += axil.BVALID.eq(1)
