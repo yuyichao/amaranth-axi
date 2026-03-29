@@ -35,4 +35,4 @@ jobs:
           pip3 install .[dev]
 
       - name: Run tests
-        run: pytest --verbose
+        run: pytest -n auto --verbose
