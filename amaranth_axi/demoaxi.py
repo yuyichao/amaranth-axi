@@ -5,8 +5,10 @@ from amaranth.utils import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
+from transactron import TModule, Transaction
+
 from .axibus import AXI4Lite
-from .axitools import axi_write_reg
+from .axitools import axi_write_reg, AXILSlaveReadIFace, AXILSlaveWriteIFace
 
 
 class DemoAXI(wiring.Component):
@@ -20,14 +22,8 @@ class DemoAXI(wiring.Component):
             'axilite': In(AXI4Lite(data_width, addr_width)),
         })
 
-    def latch_signal(self, m, val, ready):
-        cache = Signal(val.shape())
-        with m.If(ready):
-            m.d[self.domain] += cache.eq(val)
-        return Mux(ready, val, cache)
-
     def elaborate(self, platform):
-        m = Module()
+        m = TModule()
 
         idx_len = 6
         addr_shift = ceil_log2(self.data_width // 8)
@@ -37,48 +33,21 @@ class DemoAXI(wiring.Component):
         axil = self.axilite
         mem = Array([Signal(self.data_width) for _ in range(1 << idx_len)])
 
-        awready = Signal(init=1)
-        wready = Signal(init=1)
-        arready = Signal(init=1)
-        m.d.comb += [axil.AWREADY.eq(awready),
-                     axil.WREADY.eq(wready),
-                     axil.ARREADY.eq(arready),
-                     axil.BRESP.eq(0),
-                     axil.RRESP.eq(0)]
+        m.submodules.r_iface = r_iface = AXILSlaveReadIFace(axil, domain=self.domain)
+        m.submodules.w_iface = w_iface = AXILSlaveWriteIFace(axil, domain=self.domain)
 
-        # Read
-        valid_read_request = axil.ARVALID | ~axil.ARREADY
-        read_response_stall = axil.RVALID  & ~axil.RREADY
-        rd_idx = addr2idx(self.latch_signal(m, axil.ARADDR, arready))
+        with Transaction().body(m):
+            req = w_iface.get(m)
+            idx = addr2idx(req.addr)
+            data = req.data
+            strb = req.strb
+            axi_write_reg(m, mem[idx], data, strb, domain=self.domain)
+            w_iface.done(m)
 
-        m.d[self.domain] += axil.RVALID.eq(read_response_stall | valid_read_request)
-        with m.If(~read_response_stall & ((not self.read_sideeffect) |
-                                          valid_read_request)):
-            m.d[self.domain] += axil.RDATA.eq(mem[rd_idx])
-        m.d[self.domain] += arready.eq(~read_response_stall | ~valid_read_request)
-
-        # Write
-        valid_write_address = axil.AWVALID | ~awready
-        valid_write_data = axil.WVALID  | ~wready
-        write_response_stall = axil.BVALID  & ~axil.BREADY
-        wr_idx = addr2idx(self.latch_signal(m, axil.AWADDR, awready))
-        wr_data = self.latch_signal(m, axil.WDATA, wready)
-        wr_strb = self.latch_signal(m, axil.WSTRB, wready)
-
-        with m.If(write_response_stall):
-            m.d[self.domain] += [awready.eq(~valid_write_address),
-                                 wready.eq(~valid_write_data)]
-        with m.Else():
-            m.d[self.domain] += [awready.eq(valid_write_data | ~valid_write_address),
-                                 wready.eq(valid_write_address | ~valid_write_data)]
-
-        with m.If(~write_response_stall & valid_write_address & valid_write_data):
-            axi_write_reg(m, mem[wr_idx], wr_data, wr_strb, domain=self.domain)
-
-        with m.If(valid_write_address & valid_write_data):
-            m.d[self.domain] += axil.BVALID.eq(1)
-        with m.Elif(axil.BREADY):
-            m.d[self.domain] += axil.BVALID.eq(0)
+        with Transaction().body(m):
+            req = r_iface.get(m)
+            idx = addr2idx(req.addr)
+            r_iface.done(m, mem[idx])
 
         return m
 

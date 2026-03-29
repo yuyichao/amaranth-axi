@@ -43,6 +43,94 @@ class ReadyBuffer(Elaboratable):
         return m
 
 
+class AXILSlaveWriteIFace(Elaboratable):
+    def __init__(self, axil, *, domain='sync'):
+        self._axil = axil
+        self._data_width = len(axil.WDATA)
+        self.domain = domain
+        self.get = Method(o=[('addr', len(axil.AWADDR)), ('data', self._data_width),
+                             ('strb', self._data_width//8)])
+        self._done = Method(i=[('resp', 2)])
+
+    def done(self, m, /, resp=0):
+        return self._done(m, resp=resp)
+
+    def elaborate(self, plat):
+        m = TModule()
+
+        axil = self._axil
+
+        m.submodules.wa_buff = wa_buff = ReadyBuffer(ready=axil.AWREADY,
+                                                     valid=axil.AWVALID,
+                                                     data=axil.AWADDR)
+
+        m.submodules.wd_buff = wd_buff = ReadyBuffer(ready=axil.WREADY,
+                                                     valid=axil.WVALID,
+                                                     data=Cat(axil.WDATA, axil.WSTRB))
+
+        bresp = Signal(2, init=0)
+        m.d.comb += axil.BRESP.eq(bresp)
+
+        @def_method(m, self.get)
+        def _():
+            addr = wa_buff.get(m).data
+            wd_data = wd_buff.get(m).data
+            return dict(addr=addr,
+                        data=wd_data[:self._data_width],
+                        strb=wd_data[self._data_width:])
+
+        with m.If(axil.BREADY):
+            # Assume a transfer has happened unless override by `done()`
+            m.d[self.domain] += axil.BVALID.eq(0)
+
+        @def_method(m, self._done, ready=axil.BREADY)
+        def _(resp):
+            m.d[self.domain] += [axil.BVALID.eq(1),
+                                 bresp.eq(resp)]
+
+        return m
+
+
+class AXILSlaveReadIFace(Elaboratable):
+    def __init__(self, axil, *, domain='sync'):
+        self._axil = axil
+        self._data_width = len(axil.RDATA)
+        self.domain = domain
+        self.get = Method(o=[('addr', len(axil.ARADDR))])
+        self._done = Method(i=[('data', self._data_width), ('resp', 2)])
+
+    def done(self, m, /, data, resp=0):
+        return self._done(m, data=data, resp=resp)
+
+    def elaborate(self, plat):
+        m = TModule()
+
+        axil = self._axil
+
+        m.submodules.ra_buff = ra_buff = ReadyBuffer(ready=axil.ARREADY,
+                                                     valid=axil.ARVALID,
+                                                     data=axil.ARADDR)
+
+        rresp = Signal(2, init=0)
+        m.d.comb += axil.RRESP.eq(rresp)
+
+        @def_method(m, self.get)
+        def _():
+            return dict(addr=ra_buff.get(m).data)
+
+        with m.If(axil.RREADY):
+            # Assume a transfer has happened unless override by `done()`
+            m.d[self.domain] += axil.RVALID.eq(0)
+
+        @def_method(m, self._done, ready=axil.RREADY)
+        def _(data, resp):
+            m.d[self.domain] += [axil.RDATA.eq(data),
+                                 axil.RVALID.eq(1),
+                                 rresp.eq(resp)]
+
+        return m
+
+
 def axi_write_reg(m, reg, data, strb, *, domain='sync'):
     width = len(data)
     for i in range(width//8):
