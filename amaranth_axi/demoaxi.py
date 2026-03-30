@@ -53,5 +53,6 @@ class DemoAXI(wiring.Component):
 
 if __name__ == '__main__':
     from amaranth.cli import main
-    core = DemoAXI(32, 8)
+    from transactron import TransactronContextComponent
+    core = TransactronContextComponent(DemoAXI(32, 8))
     main(core, None, ports=core.axilite.all_ports)
