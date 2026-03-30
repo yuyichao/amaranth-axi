@@ -5,17 +5,16 @@ from transactron import TModule, Method, def_method
 
 
 class ReadyBuffer(Elaboratable):
-    def __init__(self, *, ready, valid, data, domain='sync'):
+    def __init__(self, *, ready, valid, data, domain='sync', buffered=False):
         self._ready = ready
         self._valid = valid
         self._data = data
         self.domain = domain
+        self._buffered = buffered
         self.get = Method(o=[('data', data.shape())])
         self.peek = Method(o=[('valid', 1), ('data', data.shape())])
 
-    def elaborate(self, plat):
-        m = TModule()
-
+    def _elaborate_unbuffered(self, m):
         empty = Signal(1, init=1)
 
         buf = Signal(self._data.shape())
@@ -40,14 +39,82 @@ class ReadyBuffer(Elaboratable):
         def _():
             return dict(valid=out_valid, data=out_data)
 
+    def _elaborate_buffered(self, m):
+        buf0 = Signal(self._data.shape())
+        buf1 = Signal(self._data.shape())
+
+        in_ready = Signal(1, init=1)
+        out_valid = Signal(1)
+
+        m.d.comb += self._ready.eq(in_ready)
+
+        def setn(n):
+            if n == 0:
+                m.d[self.domain] += [in_ready.eq(1),
+                                     out_valid.eq(0)]
+            elif n == 1:
+                m.d[self.domain] += [in_ready.eq(1),
+                                     out_valid.eq(1)]
+            else:
+                assert n == 2
+                m.d[self.domain] += [in_ready.eq(0),
+                                     out_valid.eq(1)]
+
+        def checkn(n):
+            if n == 0:
+                return in_ready & ~out_valid
+            elif n == 1:
+                return in_ready & out_valid
+            else:
+                return ~in_ready & out_valid
+
+        out_data = buf0
+
+        with m.If(~self.get.run & self._valid):
+            with m.If(checkn(0)):
+                setn(1)
+                m.d[self.domain] += buf0.eq(self._data)
+            with m.If(checkn(1)):
+                setn(2)
+                m.d[self.domain] += buf1.eq(self._data)
+
+        @def_method(m, self.get, ready=out_valid)
+        def _():
+            with m.If(self._valid):
+                with m.If(checkn(1)):
+                    m.d[self.domain] += [buf0.eq(self._data)]
+                with m.If(checkn(2)):
+                    setn(1)
+                    m.d[self.domain] += [buf0.eq(buf1)]
+            with m.Else():
+                with m.If(checkn(1)):
+                    setn(0)
+                with m.If(checkn(2)):
+                    setn(1)
+                    m.d[self.domain] += buf0.eq(buf1)
+            return dict(data=out_data)
+
+        @def_method(m, self.peek, nonexclusive=True)
+        def _():
+            return dict(valid=out_valid, data=out_data)
+
+    def elaborate(self, plat):
+        m = TModule()
+
+        if self._buffered:
+            self._elaborate_buffered(m)
+        else:
+            self._elaborate_unbuffered(m)
+
         return m
 
 
 class AXILSlaveWriteIFace(Elaboratable):
-    def __init__(self, axil, *, domain='sync'):
+    def __init__(self, axil, *, domain='sync', buffered=False):
         self._axil = axil
         self._data_width = len(axil.WDATA)
         self.domain = domain
+        self._buffered = buffered
         self.get = Method(o=[('addr', len(axil.AWADDR)), ('data', self._data_width),
                              ('strb', self._data_width//8)])
         self._done = Method(i=[('resp', 2)])
@@ -62,11 +129,13 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         m.submodules.wa_buff = wa_buff = ReadyBuffer(ready=axil.AWREADY,
                                                      valid=axil.AWVALID,
-                                                     data=axil.AWADDR)
+                                                     data=axil.AWADDR,
+                                                     buffered=self._buffered)
 
         m.submodules.wd_buff = wd_buff = ReadyBuffer(ready=axil.WREADY,
                                                      valid=axil.WVALID,
-                                                     data=Cat(axil.WDATA, axil.WSTRB))
+                                                     data=Cat(axil.WDATA, axil.WSTRB),
+                                                     buffered=self._buffered)
 
         bresp = Signal(2, init=0)
         m.d.comb += axil.BRESP.eq(bresp)
@@ -92,10 +161,11 @@ class AXILSlaveWriteIFace(Elaboratable):
 
 
 class AXILSlaveReadIFace(Elaboratable):
-    def __init__(self, axil, *, domain='sync'):
+    def __init__(self, axil, *, domain='sync', buffered=False):
         self._axil = axil
         self._data_width = len(axil.RDATA)
         self.domain = domain
+        self._buffered = buffered
         self.get = Method(o=[('addr', len(axil.ARADDR))])
         self._done = Method(i=[('data', self._data_width), ('resp', 2)])
 
@@ -109,7 +179,8 @@ class AXILSlaveReadIFace(Elaboratable):
 
         m.submodules.ra_buff = ra_buff = ReadyBuffer(ready=axil.ARREADY,
                                                      valid=axil.ARVALID,
-                                                     data=axil.ARADDR)
+                                                     data=axil.ARADDR,
+                                                     buffered=self._buffered)
 
         rresp = Signal(2, init=0)
         m.d.comb += axil.RRESP.eq(rresp)
