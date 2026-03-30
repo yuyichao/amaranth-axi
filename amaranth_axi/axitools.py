@@ -1,6 +1,7 @@
 #
 
 from amaranth import *
+from amaranth.utils import exact_log2
 from transactron import TModule, Method, def_method
 
 
@@ -110,11 +111,13 @@ class ReadyBuffer(Elaboratable):
 
 
 class AXILSlaveWriteIFace(Elaboratable):
-    def __init__(self, axil, *, domain='sync', buffered=False):
+    def __init__(self, axil, *, domain='sync', buffered=False,
+                 align_address=True):
         self._axil = axil
         self._data_width = len(axil.WDATA)
         self.domain = domain
         self._buffered = buffered
+        self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
         self.get = Method(o=[('addr', len(axil.AWADDR)), ('data', self._data_width),
                              ('strb', self._data_width//8)])
         self._done = Method(i=[('resp', 2)])
@@ -129,7 +132,7 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         m.submodules.wa_buff = wa_buff = ReadyBuffer(ready=axil.AWREADY,
                                                      valid=axil.AWVALID,
-                                                     data=axil.AWADDR,
+                                                     data=axil.AWADDR[self._clear_bits:],
                                                      buffered=self._buffered)
 
         m.submodules.wd_buff = wd_buff = ReadyBuffer(ready=axil.WREADY,
@@ -142,7 +145,7 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         @def_method(m, self.get)
         def _():
-            addr = wa_buff.get(m).data
+            addr = Cat(C(0, self._clear_bits), wa_buff.get(m).data)
             wd_data = wd_buff.get(m).data
             return dict(addr=addr,
                         data=wd_data[:self._data_width],
@@ -161,11 +164,13 @@ class AXILSlaveWriteIFace(Elaboratable):
 
 
 class AXILSlaveReadIFace(Elaboratable):
-    def __init__(self, axil, *, domain='sync', buffered=False):
+    def __init__(self, axil, *, domain='sync', buffered=False,
+                 align_address=True):
         self._axil = axil
         self._data_width = len(axil.RDATA)
         self.domain = domain
         self._buffered = buffered
+        self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
         self.get = Method(o=[('addr', len(axil.ARADDR))])
         self._done = Method(i=[('data', self._data_width), ('resp', 2)])
 
@@ -179,7 +184,7 @@ class AXILSlaveReadIFace(Elaboratable):
 
         m.submodules.ra_buff = ra_buff = ReadyBuffer(ready=axil.ARREADY,
                                                      valid=axil.ARVALID,
-                                                     data=axil.ARADDR,
+                                                     data=axil.ARADDR[self._clear_bits:],
                                                      buffered=self._buffered)
 
         rresp = Signal(2, init=0)
@@ -187,7 +192,7 @@ class AXILSlaveReadIFace(Elaboratable):
 
         @def_method(m, self.get)
         def _():
-            return dict(addr=ra_buff.get(m).data)
+            return dict(addr=Cat(C(0, self._clear_bits), ra_buff.get(m).data))
 
         with m.If(axil.RREADY):
             # Assume a transfer has happened unless override by `done()`
