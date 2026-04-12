@@ -155,7 +155,7 @@ class AXILSlaveWriteIFace(Elaboratable):
             # Assume a transfer has happened unless override by `done()`
             m.d[self.domain] += axil.BVALID.eq(0)
 
-        @def_method(m, self._done, ready=axil.BREADY)
+        @def_method(m, self._done, ready=~axil.BVALID | axil.BREADY)
         def _(resp):
             m.d[self.domain] += [axil.BVALID.eq(1),
                                  bresp.eq(resp)]
@@ -198,7 +198,7 @@ class AXILSlaveReadIFace(Elaboratable):
             # Assume a transfer has happened unless override by `done()`
             m.d[self.domain] += axil.RVALID.eq(0)
 
-        @def_method(m, self._done, ready=axil.RREADY)
+        @def_method(m, self._done, ready=~axil.RVALID | axil.RREADY)
         def _(data, resp):
             m.d[self.domain] += [axil.RDATA.eq(data),
                                  axil.RVALID.eq(1),
