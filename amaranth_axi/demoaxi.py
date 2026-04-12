@@ -13,10 +13,11 @@ from .axitools import axi_write_reg, AXILSlaveReadIFace, AXILSlaveWriteIFace
 
 class DemoAXI(wiring.Component):
     def __init__(self, data_width, addr_width, domain='sync', *,
-                 read_sideeffect=True):
+                 read_sideeffect=True, buffered=False):
         self.data_width = data_width
         self.addr_width = addr_width
         self.read_sideeffect = read_sideeffect
+        self.buffered = buffered
         self.domain = domain
         super().__init__({
             'axilite': In(AXI4Lite(data_width, addr_width)),
@@ -33,8 +34,10 @@ class DemoAXI(wiring.Component):
         axil = self.axilite
         mem = Array([Signal(self.data_width) for _ in range(1 << idx_len)])
 
-        m.submodules.r_iface = r_iface = AXILSlaveReadIFace(axil, domain=self.domain)
-        m.submodules.w_iface = w_iface = AXILSlaveWriteIFace(axil, domain=self.domain)
+        m.submodules.r_iface = r_iface = AXILSlaveReadIFace(axil, domain=self.domain,
+                                                            buffered=self.buffered)
+        m.submodules.w_iface = w_iface = AXILSlaveWriteIFace(axil, domain=self.domain,
+                                                             buffered=self.buffered)
 
         with Transaction().body(m):
             req = w_iface.get(m)

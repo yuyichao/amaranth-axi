@@ -11,6 +11,11 @@ def test_synth_demo():
     synth(demo, ports=demo.axilite.all_ports)
 
 
+def test_synth_demo_buffered():
+    demo = TransactronContextComponent(DemoAXI(32, 16, buffered=True))
+    synth(demo, ports=demo.axilite.all_ports)
+
+
 def test_synth_axi2axilite():
     axi2axil = AXI2AXILite(32, 16, 5)
     synth(axi2axil, ports=axi2axil.axilite.all_ports + axi2axil.axi.all_ports)
