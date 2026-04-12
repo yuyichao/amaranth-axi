@@ -2,6 +2,9 @@
 
 from amaranth import *
 from amaranth.utils import exact_log2
+
+from amaranth.lib.fifo import SyncFIFO
+
 from transactron import TModule, Method, def_method
 
 
@@ -110,6 +113,22 @@ class ReadyBuffer(Elaboratable):
         return m
 
 
+def _buff_reply(m, i_valid, i_data, i_ready,
+                o_valid, o_data, o_ready, *, domain):
+    reply_buffer = SyncFIFO(depth=2, width=len(o_data))
+    if domain != 'sync':
+        m.submodules._rely_buffer = DomainRenamer(domain)(reply_buffer)
+    else:
+        m.submodules._rely_buffer = reply_buffer
+    m.d.comb += [reply_buffer.w_data.eq(i_data),
+                 i_ready.eq(reply_buffer.w_rdy),
+                 reply_buffer.w_en.eq(i_valid),
+
+                 o_data.eq(reply_buffer.r_data),
+                 o_valid.eq(reply_buffer.r_rdy),
+                 reply_buffer.r_en.eq(o_ready)]
+
+
 class AXILSlaveWriteIFace(Elaboratable):
     def __init__(self, axil, *, domain='sync', buffered=False,
                  align_address=True):
@@ -151,14 +170,26 @@ class AXILSlaveWriteIFace(Elaboratable):
                         data=wd_data[:self._data_width],
                         strb=wd_data[self._data_width:])
 
-        with m.If(axil.BREADY):
-            # Assume a transfer has happened unless override by `done()`
-            m.d[self.domain] += axil.BVALID.eq(0)
+        if not self._buffered:
+            with m.If(axil.BREADY):
+                # Assume a transfer has happened unless override by `done()`
+                m.d[self.domain] += axil.BVALID.eq(0)
 
-        @def_method(m, self._done, ready=~axil.BVALID | axil.BREADY)
-        def _(resp):
-            m.d[self.domain] += [axil.BVALID.eq(1),
-                                 bresp.eq(resp)]
+            @def_method(m, self._done, ready=~axil.BVALID | axil.BREADY)
+            def _(resp):
+                m.d[self.domain] += [axil.BVALID.eq(1),
+                                     bresp.eq(resp)]
+        else:
+            i_bvalid = Signal(1)
+            i_bresp = Signal.like(bresp)
+            i_bready = Signal(1)
+
+            _buff_reply(m, i_bvalid, i_bresp, i_bready,
+                        axil.BVALID, bresp, axil.BREADY, domain=self.domain)
+            @def_method(m, self._done, ready=i_bready)
+            def _(resp):
+                m.d.top_comb += i_bresp.eq(resp)
+                m.d.comb += i_bvalid.eq(1)
 
         return m
 
@@ -194,15 +225,29 @@ class AXILSlaveReadIFace(Elaboratable):
         def _():
             return dict(addr=Cat(C(0, self._clear_bits), ra_buff.get(m).data))
 
-        with m.If(axil.RREADY):
-            # Assume a transfer has happened unless override by `done()`
-            m.d[self.domain] += axil.RVALID.eq(0)
+        if not self._buffered:
+            with m.If(axil.RREADY):
+                # Assume a transfer has happened unless override by `done()`
+                m.d[self.domain] += axil.RVALID.eq(0)
+            @def_method(m, self._done, ready=~axil.RVALID | axil.RREADY)
+            def _(data, resp):
+                m.d[self.domain] += [axil.RDATA.eq(data),
+                                     axil.RVALID.eq(1),
+                                     rresp.eq(resp)]
+        else:
+            i_rvalid = Signal(1)
+            i_rresp = Signal.like(rresp)
+            i_rdata = Signal.like(axil.RDATA)
+            i_rready = Signal(1)
 
-        @def_method(m, self._done, ready=~axil.RVALID | axil.RREADY)
-        def _(data, resp):
-            m.d[self.domain] += [axil.RDATA.eq(data),
-                                 axil.RVALID.eq(1),
-                                 rresp.eq(resp)]
+            _buff_reply(m, i_rvalid, Cat(i_rresp, i_rdata), i_rready,
+                        axil.RVALID, Cat(rresp, axil.RDATA), axil.RREADY,
+                        domain=self.domain)
+            @def_method(m, self._done, ready=i_rready)
+            def _(data, resp):
+                m.d.top_comb += [i_rdata.eq(data),
+                                 i_rresp.eq(resp)]
+                m.d.comb += i_rvalid.eq(1)
 
         return m
 
