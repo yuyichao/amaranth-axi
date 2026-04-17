@@ -3,139 +3,25 @@
 from amaranth import *
 from amaranth.utils import exact_log2
 
-from amaranth.lib.fifo import SyncFIFO
-
 from transactron import TModule, Method, def_method
 
+from .adaptors import InAdaptor, OutAdaptor
 
-class ReadyBuffer(Elaboratable):
-    def __init__(self, *, ready, valid, data, domain='sync', buffered=False):
-        self._ready = ready
-        self._valid = valid
-        self._data = data
-        self.domain = domain
-        self._buffered = buffered
-        self.get = Method(o=[('data', data.shape())])
-        self.peek = Method(o=[('valid', 1), ('data', data.shape())])
-
-    def _elaborate_unbuffered(self, m):
-        empty = Signal(1, init=1)
-
-        buf = Signal(self._data.shape())
-
-        m.d.comb += self._ready.eq(empty)
-
-        out_valid = ~empty | self._valid
-        out_data = Mux(empty, self._data, buf)
-
-        with m.If(empty & self._valid):
-            # If there's something coming in we'll assume it fills the cache.
-            # If there's a simultaneous read the `get` method will set the `empty` flag.
-            m.d[self.domain] += [empty.eq(0),
-                                 buf.eq(self._data)]
-
-        @def_method(m, self.get, ready=out_valid)
-        def _():
-            m.d[self.domain] += empty.eq(1)
-            return dict(data=out_data)
-
-        @def_method(m, self.peek, nonexclusive=True)
-        def _():
-            return dict(valid=out_valid, data=out_data)
-
-    def _elaborate_buffered(self, m):
-        buf0 = Signal(self._data.shape())
-        buf1 = Signal(self._data.shape())
-
-        in_ready = Signal(1, init=1)
-        out_valid = Signal(1)
-
-        m.d.comb += self._ready.eq(in_ready)
-
-        def setn(n):
-            if n == 0:
-                m.d[self.domain] += [in_ready.eq(1),
-                                     out_valid.eq(0)]
-            elif n == 1:
-                m.d[self.domain] += [in_ready.eq(1),
-                                     out_valid.eq(1)]
-            else:
-                assert n == 2
-                m.d[self.domain] += [in_ready.eq(0),
-                                     out_valid.eq(1)]
-
-        def checkn(n):
-            if n == 0:
-                return in_ready & ~out_valid
-            elif n == 1:
-                return in_ready & out_valid
-            else:
-                return ~in_ready & out_valid
-
-        out_data = buf0
-
-        with m.If(~self.get.run & self._valid):
-            with m.If(checkn(0)):
-                setn(1)
-                m.d[self.domain] += buf0.eq(self._data)
-            with m.If(checkn(1)):
-                setn(2)
-                m.d[self.domain] += buf1.eq(self._data)
-
-        @def_method(m, self.get, ready=out_valid)
-        def _():
-            with m.If(self._valid):
-                with m.If(checkn(1)):
-                    m.d[self.domain] += [buf0.eq(self._data)]
-                with m.If(checkn(2)):
-                    setn(1)
-                    m.d[self.domain] += [buf0.eq(buf1)]
-            with m.Else():
-                with m.If(checkn(1)):
-                    setn(0)
-                with m.If(checkn(2)):
-                    setn(1)
-                    m.d[self.domain] += buf0.eq(buf1)
-            return dict(data=out_data)
-
-        @def_method(m, self.peek, nonexclusive=True)
-        def _():
-            return dict(valid=out_valid, data=out_data)
-
-    def elaborate(self, plat):
-        m = TModule()
-
-        if self._buffered:
-            self._elaborate_buffered(m)
-        else:
-            self._elaborate_unbuffered(m)
-
-        return m
-
-
-def _buff_reply(m, i_valid, i_data, i_ready,
-                o_valid, o_data, o_ready, *, domain):
-    reply_buffer = SyncFIFO(depth=2, width=len(o_data))
-    if domain != 'sync':
-        m.submodules._rely_buffer = DomainRenamer(domain)(reply_buffer)
-    else:
-        m.submodules._rely_buffer = reply_buffer
-    m.d.comb += [reply_buffer.w_data.eq(i_data),
-                 i_ready.eq(reply_buffer.w_rdy),
-                 reply_buffer.w_en.eq(i_valid),
-
-                 o_data.eq(reply_buffer.r_data),
-                 o_valid.eq(reply_buffer.r_rdy),
-                 reply_buffer.r_en.eq(o_ready)]
+def _parse_buffered(buffered=None, in_buffered=None, out_buffered=None):
+    if buffered is not None:
+        if in_buffered is None:
+            in_buffered = buffered
+        if out_buffered is None:
+            out_buffered = buffered
+    return bool(in_buffered), bool(out_buffered)
 
 
 class AXILSlaveWriteIFace(Elaboratable):
-    def __init__(self, axil, *, domain='sync', buffered=False,
-                 align_address=True):
+    def __init__(self, axil, *, domain='sync', align_address=True, **kws):
         self._axil = axil
         self._data_width = len(axil.WDATA)
         self.domain = domain
-        self._buffered = buffered
+        self._in_buffered, self._out_buffered = _parse_buffered(**kws)
         self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
         self.get = Method(o=[('addr', len(axil.AWADDR)), ('data', self._data_width),
                              ('strb', self._data_width//8)])
@@ -148,59 +34,41 @@ class AXILSlaveWriteIFace(Elaboratable):
         m = TModule()
 
         axil = self._axil
+        addr_width = len(axil.AWADDR)
 
-        m.submodules.wa_buff = wa_buff = ReadyBuffer(ready=axil.AWREADY,
-                                                     valid=axil.AWVALID,
-                                                     data=axil.AWADDR[self._clear_bits:],
-                                                     buffered=self._buffered)
+        m.submodules.wa_adapt = wa_adapt = InAdaptor.from_signal(
+            ready=axil.AWREADY, valid=axil.AWVALID,
+            data=axil.AWADDR[self._clear_bits:], buffered=self._in_buffered)
 
-        m.submodules.wd_buff = wd_buff = ReadyBuffer(ready=axil.WREADY,
-                                                     valid=axil.WVALID,
-                                                     data=Cat(axil.WDATA, axil.WSTRB),
-                                                     buffered=self._buffered)
-
-        bresp = Signal(2, init=0)
-        m.d.comb += axil.BRESP.eq(bresp)
+        m.submodules.wd_adapt = wd_adapt = InAdaptor.from_signal(
+            ready=axil.WREADY, valid=axil.WVALID,
+            data=Cat(axil.WDATA, axil.WSTRB), buffered=self._in_buffered)
 
         @def_method(m, self.get)
         def _():
-            addr = Cat(C(0, self._clear_bits), wa_buff.get(m).data)
-            wd_data = wd_buff.get(m).data
+            addr = Cat(C(0, self._clear_bits), wa_adapt.input(m).DATA)
+            wd_data = wd_adapt.input(m).DATA
             return dict(addr=addr,
                         data=wd_data[:self._data_width],
                         strb=wd_data[self._data_width:])
 
-        if not self._buffered:
-            with m.If(axil.BREADY):
-                # Assume a transfer has happened unless override by `done()`
-                m.d[self.domain] += axil.BVALID.eq(0)
+        m.submodules.b_adapt = b_adapt = OutAdaptor.from_signal(
+            ready=axil.BREADY, valid=axil.BVALID,
+            data=axil.BRESP, buffered=self._out_buffered)
 
-            @def_method(m, self._done, ready=~axil.BVALID | axil.BREADY)
-            def _(resp):
-                m.d[self.domain] += [axil.BVALID.eq(1),
-                                     bresp.eq(resp)]
-        else:
-            i_bvalid = Signal(1)
-            i_bresp = Signal.like(bresp)
-            i_bready = Signal(1)
-
-            _buff_reply(m, i_bvalid, i_bresp, i_bready,
-                        axil.BVALID, bresp, axil.BREADY, domain=self.domain)
-            @def_method(m, self._done, ready=i_bready)
-            def _(resp):
-                m.d.top_comb += i_bresp.eq(resp)
-                m.d.comb += i_bvalid.eq(1)
+        @def_method(m, self._done)
+        def _(resp):
+            b_adapt.output(m, resp)
 
         return m
 
 
 class AXILSlaveReadIFace(Elaboratable):
-    def __init__(self, axil, *, domain='sync', buffered=False,
-                 align_address=True):
+    def __init__(self, axil, *, domain='sync', align_address=True, **kws):
         self._axil = axil
         self._data_width = len(axil.RDATA)
         self.domain = domain
-        self._buffered = buffered
+        self._in_buffered, self._out_buffered = _parse_buffered(**kws)
         self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
         self.get = Method(o=[('addr', len(axil.ARADDR))])
         self._done = Method(i=[('data', self._data_width), ('resp', 2)])
@@ -213,41 +81,21 @@ class AXILSlaveReadIFace(Elaboratable):
 
         axil = self._axil
 
-        m.submodules.ra_buff = ra_buff = ReadyBuffer(ready=axil.ARREADY,
-                                                     valid=axil.ARVALID,
-                                                     data=axil.ARADDR[self._clear_bits:],
-                                                     buffered=self._buffered)
-
-        rresp = Signal(2, init=0)
-        m.d.comb += axil.RRESP.eq(rresp)
+        m.submodules.ra_adapt = ra_adapt = InAdaptor.from_signal(
+            ready=axil.ARREADY, valid=axil.ARVALID,
+            data=axil.ARADDR[self._clear_bits:], buffered=self._in_buffered)
 
         @def_method(m, self.get)
         def _():
-            return dict(addr=Cat(C(0, self._clear_bits), ra_buff.get(m).data))
+            return dict(addr=Cat(C(0, self._clear_bits), ra_adapt.input(m).DATA))
 
-        if not self._buffered:
-            with m.If(axil.RREADY):
-                # Assume a transfer has happened unless override by `done()`
-                m.d[self.domain] += axil.RVALID.eq(0)
-            @def_method(m, self._done, ready=~axil.RVALID | axil.RREADY)
-            def _(data, resp):
-                m.d[self.domain] += [axil.RDATA.eq(data),
-                                     axil.RVALID.eq(1),
-                                     rresp.eq(resp)]
-        else:
-            i_rvalid = Signal(1)
-            i_rresp = Signal.like(rresp)
-            i_rdata = Signal.like(axil.RDATA)
-            i_rready = Signal(1)
+        m.submodules.rd_adapt = rd_adapt = OutAdaptor.from_signal(
+            ready=axil.RREADY, valid=axil.RVALID,
+            data=Cat(axil.RDATA, axil.RRESP), buffered=self._out_buffered)
 
-            _buff_reply(m, i_rvalid, Cat(i_rresp, i_rdata), i_rready,
-                        axil.RVALID, Cat(rresp, axil.RDATA), axil.RREADY,
-                        domain=self.domain)
-            @def_method(m, self._done, ready=i_rready)
-            def _(data, resp):
-                m.d.top_comb += [i_rdata.eq(data),
-                                 i_rresp.eq(resp)]
-                m.d.comb += i_rvalid.eq(1)
+        @def_method(m, self._done)
+        def _(data, resp):
+            rd_adapt.output(m, Cat(data, resp))
 
         return m
 
