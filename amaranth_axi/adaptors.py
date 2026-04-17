@@ -29,7 +29,7 @@ class OutAdaptor(wiring.Component):
         self.output = Method(i=_try_layout(layout))
         self.__signals = None
 
-        ports = dict(READY=In(1), VALID=Out(1))
+        ports = dict(READY=In(1), VALID=Out(1), LEVEL=Out(2 if buffered else 1))
         for k, v in self.output.layout_in.members.items():
             if k == 'READY' or k == 'VALID':
                 raise ValueError("Field name cannot be READY or VALID")
@@ -62,7 +62,8 @@ class OutAdaptor(wiring.Component):
             with m.If(self.READY):
                 m.d[self.domain] += self.VALID.eq(0)
 
-            m.d.comb += meth_ready.eq(~self.VALID | self.READY)
+            m.d.comb += [meth_ready.eq(~self.VALID | self.READY),
+                         self.LEVEL.eq(self.VALID)]
             with m.If(meth_ready):
                 # We can override the output even when the method isn't running
                 # as long as we don't need to hold the output.
@@ -94,6 +95,16 @@ class OutAdaptor(wiring.Component):
                     return meth_ready & self.VALID
                 else:
                     return ~meth_ready & self.VALID
+
+            with m.If(checkn(0)):
+                m.d.comb += self.LEVEL.eq(0)
+            with m.If(checkn(1)):
+                m.d.comb += self.LEVEL.eq(1)
+            with m.If(checkn(2)):
+                m.d.comb += self.LEVEL.eq(2)
+            with m.Else():
+                # Dummy
+                m.d.comb += self.LEVEL.eq(3)
 
             with m.If(~self.output.run & self.READY):
                 # Potential output without input, it is always safe to
@@ -133,7 +144,7 @@ class InAdaptor(wiring.Component):
         self.__signals = None
 
         peek_layout = [('VALID', 1)]
-        ports = dict(READY=Out(1), VALID=In(1))
+        ports = dict(READY=Out(1), VALID=In(1), LEVEL=Out(2 if buffered else 1))
         for k, v in self.input.layout_out.members.items():
             if k == 'READY' or k == 'VALID':
                 raise ValueError("Field name cannot be READY or VALID")
@@ -171,7 +182,8 @@ class InAdaptor(wiring.Component):
                 m.d[self.domain] += buff.eq(in_buff)
 
             m.d.comb += [meth_ready.eq(~empty | self.VALID),
-                         out_buff.eq(Mux(empty, in_buff, buff))]
+                         out_buff.eq(Mux(empty, in_buff, buff)),
+                         self.LEVEL.eq(~empty)]
 
             @def_method(m, self.input, ready=meth_ready)
             def _():
@@ -197,6 +209,16 @@ class InAdaptor(wiring.Component):
                     return in_ready & meth_ready
                 else:
                     return ~in_ready & meth_ready
+
+            with m.If(checkn(0)):
+                m.d.comb += self.LEVEL.eq(0)
+            with m.If(checkn(1)):
+                m.d.comb += self.LEVEL.eq(1)
+            with m.If(checkn(2)):
+                m.d.comb += self.LEVEL.eq(2)
+            with m.Else():
+                # Dummy
+                m.d.comb += self.LEVEL.eq(3)
 
             with m.If(~self.input.run & self.VALID):
                 with m.If(checkn(0)):
