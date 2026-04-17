@@ -8,16 +8,16 @@ from amaranth.lib.wiring import In, Out
 from transactron import TModule, Transaction
 
 from .axibus import AXI4Lite
-from .axitools import axi_write_reg, AXILSlaveReadIFace, AXILSlaveWriteIFace
+from .axitools import axi_write_reg, AXILSlaveReadIFace, AXILSlaveWriteIFace, _parse_buffered
 
 
 class DemoAXI(wiring.Component):
     def __init__(self, data_width, addr_width, domain='sync', *,
-                 read_sideeffect=True, buffered=False):
+                 align_address=True, **kws):
         self.data_width = data_width
         self.addr_width = addr_width
-        self.read_sideeffect = read_sideeffect
-        self.buffered = buffered
+        self.in_buffered, self.out_buffered = _parse_buffered(**kws)
+        self.align_address = align_address
         self.domain = domain
         super().__init__({
             'axilite': In(AXI4Lite(data_width, addr_width)),
@@ -34,10 +34,12 @@ class DemoAXI(wiring.Component):
         axil = self.axilite
         mem = Array([Signal(self.data_width) for _ in range(1 << idx_len)])
 
-        m.submodules.r_iface = r_iface = AXILSlaveReadIFace(axil, domain=self.domain,
-                                                            buffered=self.buffered)
-        m.submodules.w_iface = w_iface = AXILSlaveWriteIFace(axil, domain=self.domain,
-                                                             buffered=self.buffered)
+        m.submodules.r_iface = r_iface = AXILSlaveReadIFace(
+            axil, domain=self.domain, align_address=self.align_address,
+            in_buffered=self.in_buffered, out_buffered=self.out_buffered)
+        m.submodules.w_iface = w_iface = AXILSlaveWriteIFace(
+            axil, domain=self.domain, align_address=self.align_address,
+            in_buffered=self.in_buffered, out_buffered=self.out_buffered)
 
         with Transaction().body(m):
             req = w_iface.get(m)
