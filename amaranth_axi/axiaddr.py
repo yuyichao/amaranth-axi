@@ -4,7 +4,18 @@ from amaranth import *
 from amaranth.lib.wiring import Component, In, Out
 from amaranth.utils import exact_log2
 
+_pylen = len
+
 class AXIAddr(Component):
+    @classmethod
+    def from_signal(cls, *, last_addr, size, burst, len, **kws):
+        axiaddr = cls(addr_width=pylen(last_addr), len_width=pylen(len), **kws)
+        axiaddr.last_addr = last_addr
+        axiaddr.size = size
+        axiaddr.burst = burst
+        axiaddr.len = len
+        return axiaddr
+
     def __init__(self, *, addr_width, data_width, len_width, do_realign=False):
         super().__init__(dict(
             last_addr=In(addr_width),

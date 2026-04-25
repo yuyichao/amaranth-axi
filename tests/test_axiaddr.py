@@ -4,7 +4,7 @@ from amaranth import *
 from amaranth.lib.wiring import Component, In, Out
 from amaranth.sim import Simulator
 
-from amaranth_axi.axiaddr import axi_next_addr, AXIAddr
+from amaranth_axi.axiaddr import AXIAddr
 
 from .utils import synth
 
