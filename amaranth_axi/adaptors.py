@@ -20,14 +20,15 @@ class OutAdaptor(wiring.Component):
     @classmethod
     def from_signal(cls, *, ready, valid, data, **kws):
         adaptor = cls([('DATA', data.shape())], **kws)
-        adaptor.__signals = (ready, valid, data)
+        adaptor.READY = ready
+        adaptor.VALID = valid
+        adaptor.DATA = data
         return adaptor
 
     def __init__(self, layout, *, domain='sync', buffered=False):
         self.domain = domain
         self.buffered = buffered
         self.output = Method(i=_try_layout(layout))
-        self.__signals = None
 
         ports = dict(READY=In(1), VALID=Out(1), LEVEL=Out(2 if buffered else 1))
         for k, v in self.output.layout_in.members.items():
@@ -40,12 +41,6 @@ class OutAdaptor(wiring.Component):
 
     def elaborate(self, plat):
         m = TModule()
-
-        if self.__signals is not None:
-            _ready, _valid, _data = self.__signals
-            m.d.comb += [_data.eq(self.DATA),
-                         _valid.eq(self.VALID),
-                         self.READY.eq(_ready)]
 
         out_buff = Signal(self.output.layout_in)
         for k, _ in self.output.layout_in.members.items():
@@ -134,14 +129,15 @@ class InAdaptor(wiring.Component):
     @classmethod
     def from_signal(cls, *, ready, valid, data, **kws):
         adaptor = cls([('DATA', data.shape())], **kws)
-        adaptor.__signals = (ready, valid, data)
+        adaptor.READY = ready
+        adaptor.VALID = valid
+        adaptor.DATA = data
         return adaptor
 
     def __init__(self, layout, *, domain='sync', buffered=False):
         self.domain = domain
         self.buffered = buffered
         self.input = Method(o=_try_layout(layout))
-        self.__signals = None
 
         peek_layout = [('VALID', 1)]
         ports = dict(READY=Out(1), VALID=In(1), LEVEL=Out(2 if buffered else 1))
@@ -156,12 +152,6 @@ class InAdaptor(wiring.Component):
 
     def elaborate(self, plat):
         m = TModule()
-
-        if self.__signals is not None:
-            _ready, _valid, _data = self.__signals
-            m.d.comb += [self.DATA.eq(_data),
-                         self.VALID.eq(_valid),
-                         _ready.eq(self.READY)]
 
         in_buff = Signal(self.input.layout_out)
         for k, _ in self.input.layout_out.members.items():
