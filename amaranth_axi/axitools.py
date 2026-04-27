@@ -6,6 +6,7 @@ from amaranth.utils import exact_log2
 from transactron import TModule, Method, def_method
 
 from .adaptors import InAdaptor, OutAdaptor
+from .utils import StructCat
 
 def _parse_buffered(buffered=None, in_buffered=None, out_buffered=None):
     if buffered is not None:
@@ -42,15 +43,14 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         m.submodules.wd_adapt = wd_adapt = InAdaptor.from_signal(
             ready=axil.WREADY, valid=axil.WVALID,
-            data=Cat(axil.WDATA, axil.WSTRB), buffered=self._in_buffered)
+            data=StructCat(data=axil.WDATA, strb=axil.WSTRB),
+            buffered=self._in_buffered)
 
         @def_method(m, self.get)
         def _():
             addr = Cat(C(0, self._clear_bits), wa_adapt.input(m).DATA)
             wd_data = wd_adapt.input(m).DATA
-            return dict(addr=addr,
-                        data=wd_data[:self._data_width],
-                        strb=wd_data[self._data_width:])
+            return dict(addr=addr, data=wd_data.data, strb=wd_data.strb)
 
         m.submodules.b_adapt = b_adapt = OutAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,
@@ -91,11 +91,11 @@ class AXILSlaveReadIFace(Elaboratable):
 
         m.submodules.rd_adapt = rd_adapt = OutAdaptor.from_signal(
             ready=axil.RREADY, valid=axil.RVALID,
-            data=Cat(axil.RDATA, axil.RRESP), buffered=self._out_buffered)
+            data=StructCat(data=axil.RDATA, resp=axil.RRESP), buffered=self._out_buffered)
 
         @def_method(m, self._done)
         def _(data, resp):
-            rd_adapt.output(m, Cat(data, resp))
+            rd_adapt.output(m, DATA=StructCat(data=data, resp=resp))
 
         return m
 
@@ -129,12 +129,12 @@ class AXILMasterWriteIFace(Elaboratable):
 
         m.submodules.wd_adapt = wd_adapt = OutAdaptor.from_signal(
             ready=axil.WREADY, valid=axil.WVALID,
-            data=Cat(axil.WDATA, axil.WSTRB), buffered=self._out_buffered)
+            data=StructCat(data=axil.WDATA, strb=axil.WSTRB), buffered=self._out_buffered)
 
         @def_method(m, self._request)
         def _(addr, data, strb):
             wa_adapt.output(m, addr[self._clear_bits:])
-            wd_adapt.output(m, Cat(data, strb))
+            wd_adapt.output(m, DATA=StructCat(data=data, strb=strb))
 
         m.submodules.b_adapt = b_adapt = InAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,
@@ -172,12 +172,12 @@ class AXILMasterReadIFace(Elaboratable):
 
         m.submodules.rd_adapt = rd_adapt = InAdaptor.from_signal(
             ready=axil.RREADY, valid=axil.RVALID,
-            data=Cat(axil.RDATA, axil.RRESP), buffered=self._in_buffered)
+            data=StructCat(data=axil.RDATA, resp=axil.RRESP), buffered=self._in_buffered)
 
         @def_method(m, self.reply)
         def _():
             d = rd_adapt.input(m).DATA
-            return dict(data=d[:self._data_width], resp=d[self._data_width:])
+            return dict(data=d.data, resp=d.resp)
 
         return m
 
