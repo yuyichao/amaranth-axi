@@ -49,7 +49,7 @@ class AXILSlaveWriteIFace(Elaboratable):
         @def_method(m, self.get)
         def _():
             addr = Cat(C(0, self._clear_bits), wa_adapt.input(m).DATA)
-            wd_data = wd_adapt.input(m).DATA
+            wd_data = wd_adapt.input(m)
             return dict(addr=addr, data=wd_data.data, strb=wd_data.strb)
 
         m.submodules.b_adapt = b_adapt = OutAdaptor.from_signal(
@@ -95,7 +95,7 @@ class AXILSlaveReadIFace(Elaboratable):
 
         @def_method(m, self._done)
         def _(data, resp):
-            rd_adapt.output(m, DATA=StructCat(data=data, resp=resp))
+            rd_adapt.output(m, StructCat(data=data, resp=resp))
 
         return m
 
@@ -134,7 +134,7 @@ class AXILMasterWriteIFace(Elaboratable):
         @def_method(m, self._request)
         def _(addr, data, strb):
             wa_adapt.output(m, addr[self._clear_bits:])
-            wd_adapt.output(m, DATA=StructCat(data=data, strb=strb))
+            wd_adapt.output(m, StructCat(data=data, strb=strb))
 
         m.submodules.b_adapt = b_adapt = InAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,

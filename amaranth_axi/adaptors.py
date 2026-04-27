@@ -19,10 +19,16 @@ def _try_layout(layout):
 class OutAdaptor(wiring.Component):
     @classmethod
     def from_signal(cls, *, ready, valid, data, **kws):
-        adaptor = cls([('DATA', data.shape())], **kws)
+        shape = data.shape()
+        if isinstance(shape, StructLayout):
+            adaptor = cls(shape, **kws)
+            for name in shape.members:
+                setattr(adaptor, name, getattr(data, name))
+        else:
+            adaptor = cls([('DATA', shape)], **kws)
+            adaptor.DATA = data
         adaptor.READY = ready
         adaptor.VALID = valid
-        adaptor.DATA = data
         return adaptor
 
     def __init__(self, layout, *, domain='sync', buffered=False):
@@ -128,10 +134,16 @@ class OutAdaptor(wiring.Component):
 class InAdaptor(wiring.Component):
     @classmethod
     def from_signal(cls, *, ready, valid, data, **kws):
-        adaptor = cls([('DATA', data.shape())], **kws)
+        shape = data.shape()
+        if isinstance(shape, StructLayout):
+            adaptor = cls(shape, **kws)
+            for name in shape.members:
+                setattr(adaptor, name, getattr(data, name))
+        else:
+            adaptor = cls([('DATA', shape)], **kws)
+            adaptor.DATA = data
         adaptor.READY = ready
         adaptor.VALID = valid
-        adaptor.DATA = data
         return adaptor
 
     def __init__(self, layout, *, domain='sync', buffered=False):
