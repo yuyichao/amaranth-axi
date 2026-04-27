@@ -316,8 +316,10 @@ class TestAXILite(TestCaseWithSimulator):
         demo = DemoAXIWrapper(in_buffered, out_buffered, align_address)
 
         mem = [0 for _ in range(2**6)]
+        write_count = [0 for _ in range(2**6)]
         nwrite = 1000
         nread = 1000
+        write_req = []
         read_req = []
 
         async def rand_wait(sim):
@@ -327,6 +329,8 @@ class TestAXILite(TestCaseWithSimulator):
         async def do_rand_write(sim):
             await rand_wait(sim)
             idx, addr, data, strb = gen_rand_write()
+            write_req.append(idx)
+            write_count[idx] += 1
             await demo.write_request.call(sim, addr=addr, data=data, strb=strb)
             update_mem(mem, idx, data, strb)
 
@@ -335,11 +339,18 @@ class TestAXILite(TestCaseWithSimulator):
             idx = random.randint(0, 2**6 - 1)
             read_req.append(idx)
             addr = (idx << 2) + random.randint(0, 0x3)
+            # Write reply not yet received and the write might not have gone through
+            # We need to wait so that the read can see the final result
+            while write_count[idx] > 0:
+                await sim.tick()
             await demo.read_request.call(sim, addr=addr)
 
         async def receive_write(sim):
             await rand_wait(sim)
             reply = await demo.write_reply.call(sim)
+            idx = write_req.pop(0)
+            assert write_count[idx] >= 1
+            write_count[idx] -= 1
             assert reply.resp == 0
 
         async def receive_write_blocked(sim, n=100):
