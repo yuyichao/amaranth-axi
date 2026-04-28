@@ -54,11 +54,9 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         m.submodules.b_adapt = b_adapt = OutAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,
-            data=axil.BRESP, buffered=self._out_buffered)
+            data=StructCat(resp=axil.BRESP), buffered=self._out_buffered)
 
-        @def_method(m, self._done)
-        def _(resp):
-            b_adapt.output(m, resp)
+        self._done.provide(b_adapt.output)
 
         return m
 
@@ -93,9 +91,7 @@ class AXILSlaveReadIFace(Elaboratable):
             ready=axil.RREADY, valid=axil.RVALID,
             data=StructCat(data=axil.RDATA, resp=axil.RRESP), buffered=self._out_buffered)
 
-        @def_method(m, self._done)
-        def _(data, resp):
-            rd_adapt.output(m, data=data, resp=resp)
+        self._done.provide(rd_adapt.output)
 
         return m
 
@@ -139,11 +135,9 @@ class AXILMasterWriteIFace(Elaboratable):
 
         m.submodules.b_adapt = b_adapt = InAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,
-            data=axil.BRESP, buffered=self._in_buffered)
+            data=StructCat(resp=axil.BRESP), buffered=self._in_buffered)
 
-        @def_method(m, self.reply)
-        def _():
-            return b_adapt.input(m).DATA
+        self.reply.provide(b_adapt.input)
 
         return m
 
@@ -175,10 +169,7 @@ class AXILMasterReadIFace(Elaboratable):
             ready=axil.RREADY, valid=axil.RVALID,
             data=StructCat(data=axil.RDATA, resp=axil.RRESP), buffered=self._in_buffered)
 
-        @def_method(m, self.reply)
-        def _():
-            d = rd_adapt.input(m).DATA
-            return dict(data=d.data, resp=d.resp)
+        self.reply.provide(rd_adapt.input)
 
         return m
 
