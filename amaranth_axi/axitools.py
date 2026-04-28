@@ -39,12 +39,14 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         m.submodules.wa_adapt = wa_adapt = InAdaptor.from_signal(
             ready=axil.AWREADY, valid=axil.AWVALID,
-            data=axil.AWADDR[self._clear_bits:], buffered=self._in_buffered)
+            data=axil.AWADDR[self._clear_bits:], buffered=self._in_buffered,
+            domain=self.domain)
 
         m.submodules.wd_adapt = wd_adapt = InAdaptor.from_signal(
             ready=axil.WREADY, valid=axil.WVALID,
             data=StructCat(data=axil.WDATA, strb=axil.WSTRB),
-            buffered=self._in_buffered)
+            buffered=self._in_buffered,
+            domain=self.domain)
 
         @def_method(m, self.get)
         def _():
@@ -54,7 +56,8 @@ class AXILSlaveWriteIFace(Elaboratable):
 
         m.submodules.b_adapt = b_adapt = OutAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,
-            data=StructCat(resp=axil.BRESP), buffered=self._out_buffered)
+            data=StructCat(resp=axil.BRESP), buffered=self._out_buffered,
+            domain=self.domain)
 
         self._done.provide(b_adapt.output)
 
@@ -81,7 +84,8 @@ class AXILSlaveReadIFace(Elaboratable):
 
         m.submodules.ra_adapt = ra_adapt = InAdaptor.from_signal(
             ready=axil.ARREADY, valid=axil.ARVALID,
-            data=axil.ARADDR[self._clear_bits:], buffered=self._in_buffered)
+            data=axil.ARADDR[self._clear_bits:], buffered=self._in_buffered,
+            domain=self.domain)
 
         @def_method(m, self.get)
         def _():
@@ -89,7 +93,8 @@ class AXILSlaveReadIFace(Elaboratable):
 
         m.submodules.rd_adapt = rd_adapt = OutAdaptor.from_signal(
             ready=axil.RREADY, valid=axil.RVALID,
-            data=StructCat(data=axil.RDATA, resp=axil.RRESP), buffered=self._out_buffered)
+            data=StructCat(data=axil.RDATA, resp=axil.RRESP),
+            buffered=self._out_buffered, domain=self.domain)
 
         self._done.provide(rd_adapt.output)
 
@@ -121,12 +126,14 @@ class AXILMasterWriteIFace(Elaboratable):
 
         m.submodules.wa_adapt = wa_adapt = OutAdaptor.from_signal(
             ready=axil.AWREADY, valid=axil.AWVALID,
-            data=axil.AWADDR[self._clear_bits:], buffered=self._out_buffered)
+            data=axil.AWADDR[self._clear_bits:],
+            buffered=self._out_buffered, domain=self.domain)
         m.d.comb += axil.AWADDR[:self._clear_bits].eq(0)
 
         m.submodules.wd_adapt = wd_adapt = OutAdaptor.from_signal(
             ready=axil.WREADY, valid=axil.WVALID,
-            data=StructCat(data=axil.WDATA, strb=axil.WSTRB), buffered=self._out_buffered)
+            data=StructCat(data=axil.WDATA, strb=axil.WSTRB),
+            buffered=self._out_buffered, domain=self.domain)
 
         @def_method(m, self._request)
         def _(addr, data, strb):
@@ -135,7 +142,8 @@ class AXILMasterWriteIFace(Elaboratable):
 
         m.submodules.b_adapt = b_adapt = InAdaptor.from_signal(
             ready=axil.BREADY, valid=axil.BVALID,
-            data=StructCat(resp=axil.BRESP), buffered=self._in_buffered)
+            data=StructCat(resp=axil.BRESP),
+            buffered=self._in_buffered, domain=self.domain)
 
         self.reply.provide(b_adapt.input)
 
@@ -159,7 +167,8 @@ class AXILMasterReadIFace(Elaboratable):
 
         m.submodules.ra_adapt = ra_adapt = OutAdaptor.from_signal(
             ready=axil.ARREADY, valid=axil.ARVALID,
-            data=axil.ARADDR[self._clear_bits:], buffered=self._out_buffered)
+            data=axil.ARADDR[self._clear_bits:],
+            buffered=self._out_buffered, domain=self.domain)
 
         @def_method(m, self.request)
         def _(addr):
@@ -167,7 +176,8 @@ class AXILMasterReadIFace(Elaboratable):
 
         m.submodules.rd_adapt = rd_adapt = InAdaptor.from_signal(
             ready=axil.RREADY, valid=axil.RVALID,
-            data=StructCat(data=axil.RDATA, resp=axil.RRESP), buffered=self._in_buffered)
+            data=StructCat(data=axil.RDATA, resp=axil.RRESP),
+            buffered=self._in_buffered, domain=self.domain)
 
         self.reply.provide(rd_adapt.input)
 
