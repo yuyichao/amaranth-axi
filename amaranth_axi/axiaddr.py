@@ -9,7 +9,7 @@ _pylen = len
 class AXIAddr(Component):
     @classmethod
     def from_signal(cls, *, last_addr, size, burst, len, **kws):
-        axiaddr = cls(addr_width=pylen(last_addr), len_width=pylen(len), **kws)
+        axiaddr = cls(addr_width=_pylen(last_addr), len_width=_pylen(len), **kws)
         axiaddr.last_addr = last_addr
         axiaddr.size = size
         axiaddr.burst = burst
