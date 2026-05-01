@@ -447,7 +447,7 @@ class AXIMasterWriteIFace(Elaboratable):
         nbytes = self._data_width // 8
         if strb is None:
             strb = (1 << nbytes) - 1
-        return self._data_request(m, addr=addr, data=data, strb=strb)
+        return self._data_request(m, data=data, last=last, strb=strb)
 
     def elaborate(self, plat):
         m = TModule()
