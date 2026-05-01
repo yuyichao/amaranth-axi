@@ -300,6 +300,114 @@ class AXISlaveWriteIFace(Elaboratable):
         return m
 
 
+class AXISlaveReadIFace(Elaboratable):
+    def __init__(self, axi, *, domain='sync', align_address=True,
+                 use_cache=False, use_lock=False, use_size=False,
+                 use_user=False, **kws):
+        self.domain = domain
+
+        self._axi = axi
+        self._data_width = len(axi.RDATA)
+        self._id_width = len(axi.ARID)
+
+        self._in_buffered, self._out_buffered = _parse_buffered(**kws)
+        self._align_address = align_address
+        self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
+        self._use_cache = use_cache
+        self._use_lock = use_lock
+        self._use_size = use_size
+        self._use_user = use_user
+
+        get_layout = [('addr', len(axi.ARADDR)), ('id', self._id_width), ('last', 1)]
+        if use_cache:
+            get_layout.append(('cache', len(axi.ARCACHE)))
+        if use_lock:
+            get_layout.append(('lock', len(axi.ARLOCK)))
+        if use_size:
+            get_layout.append(('size', len(axi.ARSIZE)))
+        if use_user:
+            get_layout.append(('user', len(axi.ARUSER)))
+
+        self.get = Method(o=get_layout)
+        self._done = Method(i=[('id', self._id_width), ('data', self._data_width),
+                               ('last', 1), ('resp', 2)])
+
+    def done(self, m, /, id, data, last, resp=0):
+        return self._done(m, id=id, data=data, last=last, resp=resp)
+
+    def elaborate(self, plat):
+        m = TModule()
+
+        axi = self._axi
+        addr_width = len(axi.ARADDR)
+
+        # We need the full address to handle burst correctly.
+        ra_data = dict(addr=axi.ARADDR, id=axi.ARID, size=axi.ARSIZE,
+                       burst=axi.ARBURST, len=axi.ARLEN)
+
+        if self._use_cache:
+            ra_data['cache'] = axi.ARCACHE
+        if self._use_lock:
+            ra_data['lock'] = axi.ARLOCK
+        if self._use_user:
+            ra_data['user'] = axi.ARUSER
+
+        m.submodules.ra_adapt = ra_adapt = InAdaptor.from_signal(
+            ready=axi.ARREADY, valid=axi.ARVALID,
+            data=StructCat(**ra_data), buffered=self._in_buffered, domain=self.domain)
+
+        ra_cache = Signal(ra_adapt.input.layout_out)
+        ra_count = Signal(len(axi.ARLEN))
+        ra_saved = Signal()
+
+        @def_method(m, self.get)
+        def _():
+            with condition(m, nonblocking=True) as branch:
+                with branch(~ra_saved):
+                    new_ra = ra_adapt.input(m)
+                    m.d[self.domain] += ra_cache.eq(new_ra)
+
+            ra = Signal.like(new_ra)
+            m.d.top_comb += ra.eq(Mux(ra_saved, ra_cache, new_ra))
+
+            count = Signal.like(ra_count)
+            m.d.top_comb += count.eq(Mux(ra_saved, ra_count, new_ra.len))
+            m.d[self.domain] += ra_count.eq(count - 1)
+
+            last = count == 0
+            m.d[self.domain] += ra_saved.eq(~last)
+
+            rdaddr = AXIAddr.from_signal(last_addr=ra.addr,
+                                         size=ra.size,
+                                         burst=ra.burst, len=ra.len,
+                                         data_width=self._data_width,
+                                         do_realign=not self._align_address)
+            m.submodules.rdaddr = rdaddr
+            m.d[self.domain] += ra_cache.addr.eq(rdaddr.next_addr)
+
+            res = dict(addr=Cat(C(0, self._clear_bits), ra.addr[self._clear_bits:]),
+                       id=ra.id, last=last)
+            if self._use_cache:
+                res['cache'] = ra.cache
+            if self._use_lock:
+                res['lock'] = ra.lock
+            if self._use_size:
+                res['size'] = ra.size
+            if self._use_user:
+                res['user'] = ra.user
+
+            return res
+
+        m.submodules.rd_adapt = rd_adapt = OutAdaptor.from_signal(
+            ready=axi.RREADY, valid=axi.RVALID,
+            data=StructCat(id=axi.RID, data=axi.RDATA, last=axi.RLAST, resp=axi.RRESP),
+            buffered=self._out_buffered, domain=self.domain)
+
+        self._done.provide(rd_adapt.output)
+
+        return m
+
+
 class AXIMasterWriteIFace(Elaboratable):
     def __init__(self, axi, *, domain='sync', align_address=True,
                  use_cache=False, use_lock=False, use_user=False, **kws):
@@ -389,6 +497,78 @@ class AXIMasterWriteIFace(Elaboratable):
             buffered=self._in_buffered, domain=self.domain)
 
         self.reply.provide(b_adapt.input)
+
+        return m
+
+
+class AXIMasterReadIFace(Elaboratable):
+    def __init__(self, axi, *, domain='sync', align_address=True,
+                 use_cache=False, use_lock=False, use_user=False, **kws):
+        self.domain = domain
+
+        self._axi = axi
+        self._data_width = len(axi.RDATA)
+        self._id_width = len(axi.ARID)
+
+        self._in_buffered, self._out_buffered = _parse_buffered(**kws)
+        self._align_address = align_address
+        self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
+        self._use_cache = use_cache
+        self._use_lock = use_lock
+        self._use_user = use_user
+
+        req_layout = [('addr', len(axi.ARADDR)), ('id', self._id_width),
+                      ('size', len(axi.ARSIZE)), ('len', len(axi.ARLEN)),
+                      ('burst', 2)]
+        if use_cache:
+            req_layout.append(('cache', len(axi.ARCACHE)))
+        if use_lock:
+            req_layout.append(('lock', len(axi.ARLOCK)))
+        if use_user:
+            req_layout.append(('user', len(axi.ARUSER)))
+        self.request = Method(i=req_layout)
+
+        self.reply = Method(o=[('id', self._id_width), ('data', self._data_width),
+                               ('last', 1), ('resp', 2)])
+
+    def elaborate(self, plat):
+        m = TModule()
+
+        axi = self._axi
+        addr_width = len(axi.ARADDR)
+
+        ra_data = dict(addr=axi.ARADDR[self._clear_bits:], id=axi.ARID, size=axi.ARSIZE,
+                       burst=axi.ARBURST, len=axi.ARLEN)
+        if self._use_cache:
+            ra_data['cache'] = axi.ARCACHE
+        if self._use_lock:
+            ra_data['lock'] = axi.ARLOCK
+        if self._use_user:
+            ra_data['user'] = axi.ARUSER
+
+        m.submodules.ra_adapt = ra_adapt = OutAdaptor.from_signal(
+            ready=axi.ARREADY, valid=axi.ARVALID,
+            data=StructCat(**ra_data), buffered=self._out_buffered, domain=self.domain)
+        m.d.comb += axi.ARADDR[:self._clear_bits].eq(0)
+
+        @def_method(m, self.request)
+        def _(arg):
+            out_data = dict(addr=arg.addr[self._clear_bits:],
+                            id=arg.id, size=arg.size, burst=arg.burst, len=arg.len)
+            if self._use_cache:
+                out_data['cache'] = arg.cache
+            if self._use_lock:
+                out_data['lock'] = arg.lock
+            if self._use_user:
+                out_data['user'] = arg.user
+            ra_adapt.output(m, **out_data)
+
+        m.submodules.rd_adapt = rd_adapt = InAdaptor.from_signal(
+            ready=axi.RREADY, valid=axi.RVALID,
+            data=StructCat(id=axi.RID, data=axi.RDATA, last=axi.RLAST, resp=axi.RRESP),
+            buffered=self._in_buffered, domain=self.domain)
+
+        self.reply.provide(rd_adapt.input)
 
         return m
 

@@ -8,21 +8,24 @@ from transactron import TModule, Transaction, Method, def_method
 from transactron.testing import TestCaseWithSimulator, TestbenchIO as _TestbenchIO, CallTrigger
 from transactron.lib.adapters import AdapterTrans
 
-from amaranth_axi.axitools import AXIMasterWriteIFace, AXISlaveWriteIFace
+from amaranth_axi.axitools import AXIMasterWriteIFace, AXISlaveWriteIFace, AXIMasterReadIFace, AXISlaveReadIFace
 from amaranth_axi.axibus import AXI3, AXI4
 
 import pytest
 import random
 
+def struct_to_dict(s):
+    return {name: getattr(s, name) for name in s.shape().members}
+
+
 # Use a separate function to not shadow the `len` name in the main function
 def _len_kw(*, len=None):
     return len
 
-def decode_write(*, data_width, align_address, addr, id, size, burst, datas, strbs,
-                 cache=None, lock=None, user=None,
-                 use_cache=False, use_lock=False, use_size=False, use_user=False,
-                 wid=None, **kws):
-    # Ignoring wid
+def decode_addr(*, data_width, align_address, addr, id, size, burst,
+                cache=None, lock=None, user=None,
+                use_cache=False, use_lock=False, use_size=False, use_user=False,
+                wid=None, **kws):
     _len = _len_kw(**kws)
     assert _len is not None
     extras = {}
@@ -37,8 +40,6 @@ def decode_write(*, data_width, align_address, addr, id, size, burst, datas, str
         extras['user'] = user
     if use_size:
         extras['size'] = size
-    assert len(datas) == _len + 1
-    assert len(strbs) == _len + 1
     fullsize = 1 << size
 
     if align_address:
@@ -55,14 +56,12 @@ def decode_write(*, data_width, align_address, addr, id, size, burst, datas, str
 
     if burst == 0:
         for i in range(_len + 1):
-            yield dict(data=datas[i], strb=strbs[i],
-                       addr=align_addr(addr, 0), id=id, last=int(i == _len), **extras)
+            yield dict(addr=align_addr(addr, 0), id=id, last=int(i == _len), **extras)
         return
 
     if burst == 1:
         for i in range(_len + 1):
-            yield dict(data=datas[i], strb=strbs[i],
-                       addr=align_addr(addr + i * fullsize, i), id=id,
+            yield dict(addr=align_addr(addr + i * fullsize, i), id=id,
                        last=int(i == _len), **extras)
         return
 
@@ -77,17 +76,24 @@ def decode_write(*, data_width, align_address, addr, id, size, burst, datas, str
         if ele_addr >= block_end:
             ele_addr -= block_size
         assert ele_addr < block_end
-        yield dict(data=datas[i], strb=strbs[i],
-                   addr=align_addr(ele_addr, i), id=id,
+        yield dict(addr=align_addr(ele_addr, i), id=id,
                    last=int(i == _len), **extras)
 
-def gen_rand_write(*, data_width, addr_width, id_width, len_width,
-                   size=None, burst=None, cache_width=0, lock_width=0, user_width=0,
-                   **kws):
+
+def decode_write(*, datas, strbs, **kws):
+    # Ignoring wid
+    for (addr, data, strb) in zip(decode_addr(**kws), datas, strbs):
+        yield dict(data=data, strb=strb, **addr)
+
+def decode_read(**kws):
+    return decode_addr(**kws)
+
+def gen_rand_addr(*, data_width, addr_width, id_width, len_width,
+                  size=None, burst=None, cache_width=0, lock_width=0, user_width=0,
+                  **kws):
     _len = _len_kw(**kws)
 
     addr_req = {}
-    data_req = {}
 
     max_size = exact_log2(data_width) - 3
     addr_req['id'] = random.randint(0, (1 << id_width) - 1)
@@ -108,10 +114,6 @@ def gen_rand_write(*, data_width, addr_width, id_width, len_width,
         assert (_len >> len_width) == 0
     addr_req['len'] = _len
 
-    data_req['datas'] = [random.randint(0, (1 << data_width) - 1) for _ in range(_len + 1)]
-    data_req['strbs'] = [random.randint(0, (1 << data_width // 8) - 1) for _ in range(_len + 1)]
-    data_req['wid'] = addr_req['id']
-
     if burst == 1:
         last_offset = _len << size
         while True:
@@ -129,7 +131,19 @@ def gen_rand_write(*, data_width, addr_width, id_width, len_width,
     if user_width:
         addr_req['user'] = random.randint(0, (1 << user_width) - 1)
 
+    return addr_req
+
+def gen_rand_write(*, data_width, **kws):
+    addr_req = gen_rand_addr(data_width=data_width, **kws)
+    _len = addr_req['len']
+    data_req = {}
+    data_req['datas'] = [random.randint(0, (1 << data_width) - 1) for _ in range(_len + 1)]
+    data_req['strbs'] = [random.randint(0, (1 << data_width // 8) - 1) for _ in range(_len + 1)]
+    data_req['wid'] = addr_req['id']
     return addr_req, data_req
+
+def gen_rand_read(**kws):
+    return gen_rand_addr(**kws)
 
 class AXIWritePair(Elaboratable):
     def __init__(self, axi, in_buffered, out_buffered, align_address,
@@ -160,6 +174,40 @@ class AXIWritePair(Elaboratable):
 
         m.submodules.addr_request = self.addr_request
         m.submodules.data_request = self.data_request
+        m.submodules.get_reply = self.get_reply
+
+        m.submodules.get_request = self.get_request
+        m.submodules.send_reply = self.send_reply
+
+        return m
+
+class AXIReadPair(Elaboratable):
+    def __init__(self, axi, in_buffered, out_buffered, align_address,
+                 use_cache=False, use_lock=False, use_size=False, use_user=False):
+        self.master = AXIMasterReadIFace(axi, align_address=align_address,
+                                         in_buffered=in_buffered,
+                                         out_buffered=out_buffered,
+                                         use_cache=use_cache, use_lock=use_lock,
+                                         use_user=use_user)
+        self.slave = AXISlaveReadIFace(axi, align_address=align_address,
+                                       in_buffered=in_buffered,
+                                       out_buffered=out_buffered,
+                                       use_cache=use_cache, use_lock=use_lock,
+                                       use_size=use_size, use_user=use_user)
+
+        self.request = _TestbenchIO(AdapterTrans.create(self.master.request))
+        self.get_reply = _TestbenchIO(AdapterTrans.create(self.master.reply))
+
+        self.get_request = _TestbenchIO(AdapterTrans.create(self.slave.get))
+        self.send_reply = _TestbenchIO(AdapterTrans.create(self.slave._done))
+
+    def elaborate(self, plat):
+        m = TModule()
+
+        m.submodules.master = self.master
+        m.submodules.slave = self.slave
+
+        m.submodules.request = self.request
         m.submodules.get_reply = self.get_reply
 
         m.submodules.get_request = self.get_request
@@ -247,9 +295,8 @@ class TestAXIWrite(TestCaseWithSimulator):
 
         def check_reply(reply):
             assert reply is not None
-            reply_value = {name: getattr(reply, name) for name in reply.shape().members}
             expected = requests.pop(0)
-            assert reply_value == expected
+            assert struct_to_dict(reply) == expected
 
         async def consumer(sim):
             check_reply(await writer.get_request.call(sim))
@@ -326,9 +373,8 @@ class TestAXIWrite(TestCaseWithSimulator):
 
         def check_reply(reply):
             assert reply is not None
-            reply_value = {name: getattr(reply, name) for name in reply.shape().members}
             expected = requests.pop(0)
-            assert reply_value == expected
+            assert struct_to_dict(reply) == expected
 
         async def consumer(sim):
             check_reply(await writer.get_request.call(sim))
@@ -393,9 +439,8 @@ class TestAXIWrite(TestCaseWithSimulator):
 
         def check_reply(reply):
             assert reply is not None
-            reply_value = {name: getattr(reply, name) for name in reply.shape().members}
             expected = decoded_reqs.pop(0)
-            assert reply_value == expected
+            assert struct_to_dict(reply) == expected
 
         async def consumer(sim):
             while decoded_reqs:
@@ -404,4 +449,193 @@ class TestAXIWrite(TestCaseWithSimulator):
         with self.run_simulation(writer) as sim:
             sim.add_testbench(addr_producer)
             sim.add_testbench(data_producer)
+            sim.add_testbench(consumer)
+
+
+class TestAXIRead(TestCaseWithSimulator):
+    @pytest.mark.parametrize("in_buffered", [False, True])
+    @pytest.mark.parametrize("out_buffered", [False, True])
+    @pytest.mark.parametrize("align_address", [False, True])
+    def test_read_reply_full_throughput(self, in_buffered, out_buffered, align_address):
+        data_width = 32
+        addr_width = 32
+        id_width = 6
+        axi = AXI4(data_width, addr_width, id_width).create()
+        reader = AXIReadPair(axi, in_buffered, out_buffered, align_address)
+
+        requests = []
+
+        cycles = 100
+        async def producer(sim):
+            for _ in range(cycles):
+                id = random.randint(0, (1 << id_width) - 1)
+                resp = random.randint(0, 3)
+                data = random.randint(0, (1 << data_width) - 1)
+                last = random.randint(0, 1)
+                assert (await reader.send_reply.call_try(sim, id=id, data=data,
+                                                         last=last, resp=resp)) is not None
+                requests.append(dict(id=id, data=data, last=last, resp=resp))
+
+        def check_reply(reply):
+            assert reply is not None
+            expected = requests.pop(0)
+            assert struct_to_dict(reply) == expected
+
+        async def consumer(sim):
+            check_reply(await reader.get_reply.call(sim))
+            for _ in range(cycles - 1):
+                reply = await reader.get_reply.call_try(sim)
+                check_reply(reply)
+
+        with self.run_simulation(reader) as sim:
+            sim.add_testbench(producer)
+            sim.add_testbench(consumer)
+
+    @pytest.mark.parametrize("in_buffered", [False, True])
+    @pytest.mark.parametrize("out_buffered", [False, True])
+    @pytest.mark.parametrize("align_address", [False, True])
+    @pytest.mark.parametrize("AXI", [AXI3, AXI4])
+    def test_read_request_full_throughput(self, in_buffered, out_buffered, align_address,
+                                          AXI):
+        data_width = 32
+        addr_width = 32
+        id_width = 6
+        axi = AXI(data_width, addr_width, id_width).create()
+        len_width = len(axi.ARLEN)
+        reader = AXIReadPair(axi, in_buffered, out_buffered, align_address)
+
+        requests = []
+
+        async def producer(sim):
+            for _ in range(100):
+                addr_req = gen_rand_read(data_width=data_width,
+                                         addr_width=addr_width,
+                                         id_width=id_width,
+                                         len_width=len_width)
+                requests.extend(decode_read(data_width=data_width,
+                                            align_address=align_address,
+                                            **addr_req))
+                assert (await reader.request.call(sim, **addr_req)) is not None
+
+        def check_reply(reply):
+            assert reply is not None
+            expected = requests.pop(0)
+            assert struct_to_dict(reply) == expected
+
+        async def consumer(sim):
+            check_reply(await reader.get_request.call(sim))
+            while requests:
+                check_reply(await reader.get_request.call_try(sim))
+
+        with self.run_simulation(reader) as sim:
+            sim.add_testbench(producer)
+            sim.add_testbench(consumer)
+
+    @pytest.mark.parametrize("in_buffered", [False, True])
+    @pytest.mark.parametrize("out_buffered", [False, True])
+    @pytest.mark.parametrize("align_address", [False, True])
+    @pytest.mark.parametrize("AXI", [AXI3, AXI4])
+    @pytest.mark.parametrize("use_cache", [False, True])
+    @pytest.mark.parametrize("use_lock", [False, True])
+    @pytest.mark.parametrize("use_size", [False, True])
+    @pytest.mark.parametrize("use_user", [False, True])
+    def test_read_request_side_channel(self, in_buffered, out_buffered, align_address,
+                                       AXI, use_cache, use_lock, use_size, use_user):
+        data_width = 32
+        addr_width = 32
+        id_width = 3
+        if use_user:
+            if AXI is AXI3:
+                return
+            user_width = 4
+            axi = AXI(data_width, addr_width, id_width, user_width=user_width).create()
+        else:
+            user_width = 0
+            axi = AXI(data_width, addr_width, id_width).create()
+        len_width = len(axi.ARLEN)
+        cache_width = len(axi.ARCACHE) if use_cache else 0
+        lock_width = len(axi.ARLOCK) if use_lock else 0
+        reader = AXIReadPair(axi, in_buffered, out_buffered, align_address,
+                             use_cache=use_cache, use_lock=use_lock,
+                             use_size=use_size, use_user=use_user)
+
+        requests = []
+
+        async def producer(sim):
+            for _ in range(5):
+                addr_req = gen_rand_read(data_width=data_width,
+                                         addr_width=addr_width,
+                                         id_width=id_width,
+                                         len_width=len_width,
+                                         cache_width=cache_width,
+                                         lock_width=lock_width,
+                                             user_width=user_width)
+                requests.extend(decode_read(data_width=data_width,
+                                            align_address=align_address,
+                                            use_cache=use_cache, use_lock=use_lock,
+                                            use_size=use_size, use_user=use_user,
+                                            **addr_req))
+                assert (await reader.request.call(sim, **addr_req)) is not None
+
+        def check_reply(reply):
+            assert reply is not None
+            expected = requests.pop(0)
+            assert struct_to_dict(reply) == expected
+
+        async def consumer(sim):
+            check_reply(await reader.get_request.call(sim))
+            while requests:
+                check_reply(await reader.get_request.call_try(sim))
+
+        with self.run_simulation(reader) as sim:
+            sim.add_testbench(producer)
+            sim.add_testbench(consumer)
+
+    @pytest.mark.parametrize("in_buffered", [False, True])
+    @pytest.mark.parametrize("out_buffered", [False, True])
+    @pytest.mark.parametrize("align_address", [False, True])
+    @pytest.mark.parametrize("AXI", [AXI3, AXI4])
+    @pytest.mark.parametrize("maxwait", [2, 6])
+    def test_read_random(self, in_buffered, out_buffered, align_address, AXI, maxwait):
+        data_width = 32
+        addr_width = 32
+        id_width = 6
+        axi = AXI(data_width, addr_width, id_width).create()
+        len_width = len(axi.ARLEN)
+        reader = AXIReadPair(axi, in_buffered, out_buffered, align_address)
+
+        addr_reqs = []
+        decoded_reqs = []
+
+        for _ in range(100):
+            addr_req = gen_rand_read(data_width=data_width,
+                                     addr_width=addr_width,
+                                     id_width=id_width,
+                                     len_width=len_width)
+            addr_reqs.append(addr_req)
+            decoded_reqs.extend(decode_read(data_width=data_width,
+                                            align_address=align_address,
+                                            **addr_req))
+
+        async def rand_wait(sim):
+            for _ in range(random.randint(0, maxwait)):
+                await sim.tick()
+
+        async def addr_producer(sim):
+            while addr_reqs:
+                addr_req = addr_reqs.pop(0)
+                await rand_wait(sim)
+                await reader.request.call(sim, **addr_req)
+
+        def check_reply(reply):
+            assert reply is not None
+            expected = decoded_reqs.pop(0)
+            assert struct_to_dict(reply) == expected
+
+        async def consumer(sim):
+            while decoded_reqs:
+                check_reply(await reader.get_request.call(sim))
+
+        with self.run_simulation(reader) as sim:
+            sim.add_testbench(addr_producer)
             sim.add_testbench(consumer)
