@@ -410,7 +410,8 @@ class AXISlaveReadIFace(Elaboratable):
 
 class AXIMasterWriteIFace(Elaboratable):
     def __init__(self, axi, *, domain='sync', align_address=True,
-                 use_cache=False, use_lock=False, use_user=False, **kws):
+                 const_id=None, const_size=None, const_len=None, const_burst=None,
+                 const_strb=None, const_cache=0, const_lock=0, const_user=0, **kws):
         self.domain = domain
 
         self._axi = axi
@@ -420,34 +421,50 @@ class AXIMasterWriteIFace(Elaboratable):
         self._in_buffered, self._out_buffered = _parse_buffered(**kws)
         self._align_address = align_address
         self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
-        self._use_cache = use_cache
-        self._use_lock = use_lock
-        self._use_user = use_user
 
-        addr_req_layout = [('addr', len(axi.AWADDR)), ('id', self._id_width),
-                           ('size', len(axi.AWSIZE)), ('len', len(axi.AWLEN)),
-                           ('burst', 2)]
-        if use_cache:
+        self._const_id = const_id
+        self._const_size = const_size
+        self._const_len = const_len
+        self._const_burst = const_burst
+        self._const_strb = const_strb
+        self._const_cache = const_cache
+        self._const_lock = const_lock
+        self._const_user = const_user
+        self._const_last = 1 if (const_len is not None and const_len == 0) else None
+
+        addr_req_layout = [('addr', len(axi.AWADDR))]
+        if self._const_id is None:
+            addr_req_layout.append(('id', self._id_width))
+        if self._const_size is None:
+            addr_req_layout.append(('size', len(axi.AWSIZE)))
+        if self._const_len is None:
+            addr_req_layout.append(('len', len(axi.AWLEN)))
+        if self._const_burst is None:
+            addr_req_layout.append(('burst', 2))
+        if self._const_cache is None:
             addr_req_layout.append(('cache', len(axi.AWCACHE)))
-        if use_lock:
+        if self._const_lock is None:
             addr_req_layout.append(('lock', len(axi.AWLOCK)))
-        if use_user:
+        if self._const_user is None:
             addr_req_layout.append(('user', len(axi.AWUSER)))
         self.addr_request = Method(i=addr_req_layout)
 
-        data_req_layout = [('data', self._data_width), ('last', 1),
-                           ('strb', self._data_width//8)]
-        if hasattr(axi, 'WID'):
-            data_req_layout.append(('id', len(axi.WID)))
+        data_req_layout = [('data', self._data_width)]
+        if self._const_strb is None:
+            data_req_layout.append(('strb', self._data_width//8))
+        if self._const_last is None:
+            data_req_layout.append(('last', 1))
+        if hasattr(axi, 'WID') and self._const_id is None:
+            data_req_layout.append(('id', self._id_width))
         self._data_request = Method(i=data_req_layout)
 
         self.reply = Method(o=[('id', self._id_width), ('resp', 2)])
 
-    def data_request(self, m, /, data, last, strb=None):
+    def data_request(self, m, /, **kws):
         nbytes = self._data_width // 8
-        if strb is None:
-            strb = (1 << nbytes) - 1
-        return self._data_request(m, data=data, last=last, strb=strb)
+        if self._const_strb is None and 'strb' not in kws:
+            kws['strb'] = (1 << nbytes) - 1
+        return self._data_request(m, **kws)
 
     def elaborate(self, plat):
         m = TModule()
@@ -455,55 +472,71 @@ class AXIMasterWriteIFace(Elaboratable):
         axi = self._axi
         addr_width = len(axi.AWADDR)
 
-        wa_data = dict(addr=axi.AWADDR[self._clear_bits:], id=axi.AWID, size=axi.AWSIZE,
-                       burst=axi.AWBURST, len=axi.AWLEN)
-        if self._use_cache:
-            wa_data['cache'] = axi.AWCACHE
-        if self._use_lock:
-            wa_data['lock'] = axi.AWLOCK
-        if self._use_user:
-            wa_data['user'] = axi.AWUSER
+        def add_opt_field(data, name, c, sig):
+            if c is None:
+                data[name] = sig
+            else:
+                m.d.top_comb += sig.eq(c)
+
+        wa_data = dict(addr=axi.AWADDR[self._clear_bits:])
+        m.d.comb += axi.AWADDR[:self._clear_bits].eq(0)
+        add_opt_field(wa_data, 'id', self._const_id, axi.AWID)
+        add_opt_field(wa_data, 'size', self._const_size, axi.AWSIZE)
+        add_opt_field(wa_data, 'len', self._const_len, axi.AWLEN)
+        add_opt_field(wa_data, 'burst', self._const_burst, axi.AWBURST)
+        add_opt_field(wa_data, 'cache', self._const_cache, axi.AWCACHE)
+        add_opt_field(wa_data, 'lock', self._const_lock, axi.AWLOCK)
+        if hasattr(axi, 'AWUSER'):
+            add_opt_field(wa_data, 'user', self._const_user, axi.AWUSER)
 
         m.submodules.wa_adapt = wa_adapt = OutAdaptor.from_signal(
             ready=axi.AWREADY, valid=axi.AWVALID,
             data=StructCat(**wa_data), buffered=self._out_buffered, domain=self.domain)
-        m.d.comb += axi.AWADDR[:self._clear_bits].eq(0)
 
         @def_method(m, self.addr_request)
         def _(arg):
-            out_data = dict(addr=arg.addr[self._clear_bits:],
-                            id=arg.id, size=arg.size, burst=arg.burst, len=arg.len)
-            if self._use_cache:
-                out_data['cache'] = arg.cache
-            if self._use_lock:
-                out_data['lock'] = arg.lock
-            if self._use_user:
-                out_data['user'] = arg.user
+            out_data = dict(addr=arg.addr[self._clear_bits:])
+            for name in arg.shape().members:
+                if name == 'addr':
+                    continue
+                out_data[name] = getattr(arg, name)
             wa_adapt.output(m, **out_data)
 
-        widkws = {}
+        wd_data = dict(data=axi.WDATA)
+        add_opt_field(wd_data, 'strb', self._const_strb, axi.WSTRB)
+        add_opt_field(wd_data, 'last', self._const_last, axi.WLAST)
         if hasattr(axi, 'WID'):
-            widkws['id'] = axi.WID
+            add_opt_field(wd_data, 'id', self._const_id, axi.WID)
+
         m.submodules.wd_adapt = wd_adapt = OutAdaptor.from_signal(
             ready=axi.WREADY, valid=axi.WVALID,
-            data=StructCat(data=axi.WDATA, last=axi.WLAST, strb=axi.WSTRB, **widkws),
+            data=StructCat(**wd_data),
             buffered=self._out_buffered, domain=self.domain)
 
         self._data_request.provide(wd_adapt.output)
 
+        b_data = dict(resp=axi.BRESP)
+        if self._const_id is None:
+            b_data['id'] = axi.BID
+
         m.submodules.b_adapt = b_adapt = InAdaptor.from_signal(
             ready=axi.BREADY, valid=axi.BVALID,
-            data=StructCat(id=axi.BID, resp=axi.BRESP),
+            data=StructCat(**b_data),
             buffered=self._in_buffered, domain=self.domain)
 
-        self.reply.provide(b_adapt.input)
+        @def_method(m, self.reply)
+        def _(arg):
+            b = b_adapt.input(m)
+            return dict(resp=b.resp,
+                        id=b.id if self._const_id is None else self._const_id)
 
         return m
 
 
 class AXIMasterReadIFace(Elaboratable):
     def __init__(self, axi, *, domain='sync', align_address=True,
-                 use_cache=False, use_lock=False, use_user=False, **kws):
+                 const_id=None, const_size=None, const_len=None, const_burst=None,
+                 const_cache=0, const_lock=0, const_user=0, **kws):
         self.domain = domain
 
         self._axi = axi
@@ -513,18 +546,30 @@ class AXIMasterReadIFace(Elaboratable):
         self._in_buffered, self._out_buffered = _parse_buffered(**kws)
         self._align_address = align_address
         self._clear_bits = exact_log2(self._data_width//8) if align_address else 0
-        self._use_cache = use_cache
-        self._use_lock = use_lock
-        self._use_user = use_user
 
-        req_layout = [('addr', len(axi.ARADDR)), ('id', self._id_width),
-                      ('size', len(axi.ARSIZE)), ('len', len(axi.ARLEN)),
-                      ('burst', 2)]
-        if use_cache:
+        self._const_id = const_id
+        self._const_size = const_size
+        self._const_len = const_len
+        self._const_burst = const_burst
+        self._const_cache = const_cache
+        self._const_lock = const_lock
+        self._const_user = const_user
+        self._const_last = 1 if (const_len is not None and const_len == 0) else None
+
+        req_layout = [('addr', len(axi.ARADDR))]
+        if self._const_id is None:
+            req_layout.append(('id', self._id_width))
+        if self._const_size is None:
+            req_layout.append(('size', len(axi.ARSIZE)))
+        if self._const_len is None:
+            req_layout.append(('len', len(axi.ARLEN)))
+        if self._const_burst is None:
+            req_layout.append(('burst', 2))
+        if self._const_cache is None:
             req_layout.append(('cache', len(axi.ARCACHE)))
-        if use_lock:
+        if self._const_lock is None:
             req_layout.append(('lock', len(axi.ARLOCK)))
-        if use_user:
+        if self._const_user is None:
             req_layout.append(('user', len(axi.ARUSER)))
         self.request = Method(i=req_layout)
 
@@ -537,38 +582,53 @@ class AXIMasterReadIFace(Elaboratable):
         axi = self._axi
         addr_width = len(axi.ARADDR)
 
-        ra_data = dict(addr=axi.ARADDR[self._clear_bits:], id=axi.ARID, size=axi.ARSIZE,
-                       burst=axi.ARBURST, len=axi.ARLEN)
-        if self._use_cache:
-            ra_data['cache'] = axi.ARCACHE
-        if self._use_lock:
-            ra_data['lock'] = axi.ARLOCK
-        if self._use_user:
-            ra_data['user'] = axi.ARUSER
+        def add_opt_field(data, name, c, sig):
+            if c is None:
+                data[name] = sig
+            else:
+                m.d.top_comb += sig.eq(c)
+
+        ra_data = dict(addr=axi.ARADDR[self._clear_bits:])
+        m.d.comb += axi.ARADDR[:self._clear_bits].eq(0)
+        add_opt_field(ra_data, 'id', self._const_id, axi.ARID)
+        add_opt_field(ra_data, 'size', self._const_size, axi.ARSIZE)
+        add_opt_field(ra_data, 'len', self._const_len, axi.ARLEN)
+        add_opt_field(ra_data, 'burst', self._const_burst, axi.ARBURST)
+        add_opt_field(ra_data, 'cache', self._const_cache, axi.ARCACHE)
+        add_opt_field(ra_data, 'lock', self._const_lock, axi.ARLOCK)
+        if hasattr(axi, 'ARUSER'):
+            add_opt_field(ra_data, 'user', self._const_user, axi.ARUSER)
 
         m.submodules.ra_adapt = ra_adapt = OutAdaptor.from_signal(
             ready=axi.ARREADY, valid=axi.ARVALID,
             data=StructCat(**ra_data), buffered=self._out_buffered, domain=self.domain)
-        m.d.comb += axi.ARADDR[:self._clear_bits].eq(0)
 
         @def_method(m, self.request)
         def _(arg):
-            out_data = dict(addr=arg.addr[self._clear_bits:],
-                            id=arg.id, size=arg.size, burst=arg.burst, len=arg.len)
-            if self._use_cache:
-                out_data['cache'] = arg.cache
-            if self._use_lock:
-                out_data['lock'] = arg.lock
-            if self._use_user:
-                out_data['user'] = arg.user
+            out_data = dict(addr=arg.addr[self._clear_bits:])
+            for name in arg.shape().members:
+                if name == 'addr':
+                    continue
+                out_data[name] = getattr(arg, name)
             ra_adapt.output(m, **out_data)
+
+        rd_data = dict(data=axi.RDATA, resp=axi.RRESP)
+        if self._const_id is None:
+            rd_data['id'] = axi.RID
+        if self._const_last is None:
+            rd_data['last'] = axi.RLAST
 
         m.submodules.rd_adapt = rd_adapt = InAdaptor.from_signal(
             ready=axi.RREADY, valid=axi.RVALID,
-            data=StructCat(id=axi.RID, data=axi.RDATA, last=axi.RLAST, resp=axi.RRESP),
+            data=StructCat(**rd_data),
             buffered=self._in_buffered, domain=self.domain)
 
-        self.reply.provide(rd_adapt.input)
+        @def_method(m, self.reply)
+        def _(arg):
+            rd = rd_adapt.input(m)
+            return dict(data=rd.data, resp=rd.resp,
+                        id=rd.id if self._const_id is None else self._const_id,
+                        last=rd.last if self._const_last is None else self._const_last)
 
         return m
 

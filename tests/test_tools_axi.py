@@ -89,20 +89,26 @@ def decode_read(**kws):
     return decode_addr(**kws)
 
 def gen_rand_addr(*, data_width, addr_width, id_width, len_width,
-                  size=None, burst=None, cache_width=0, lock_width=0, user_width=0,
-                  **kws):
+                  id=None, size=None, burst=None, cache_width=0, lock_width=0,
+                  user_width=0, **kws):
     _len = _len_kw(**kws)
 
     addr_req = {}
 
     max_size = exact_log2(data_width) - 3
-    addr_req['id'] = random.randint(0, (1 << id_width) - 1)
+    if id is None:
+        addr_req['id'] = random.randint(0, (1 << id_width) - 1)
+    else:
+        addr_req['id'] = id
     if size is None:
         size = random.randint(0, max_size)
     assert 0 <= size <= max_size
     addr_req['size'] = size
     if burst is None:
-        burst = random.randint(0, 2)
+        if _len is not None and _len not in (1, 3, 7, 15):
+            burst = random.randint(0, 1)
+        else:
+            burst = random.randint(0, 2)
     addr_req['burst'] = burst
     if burst == 2:
         if _len is None:
@@ -133,12 +139,15 @@ def gen_rand_addr(*, data_width, addr_width, id_width, len_width,
 
     return addr_req
 
-def gen_rand_write(*, data_width, **kws):
+def gen_rand_write(*, data_width, strb=None, **kws):
     addr_req = gen_rand_addr(data_width=data_width, **kws)
     _len = addr_req['len']
     data_req = {}
     data_req['datas'] = [random.randint(0, (1 << data_width) - 1) for _ in range(_len + 1)]
-    data_req['strbs'] = [random.randint(0, (1 << data_width // 8) - 1) for _ in range(_len + 1)]
+    if strb is None:
+        data_req['strbs'] = [random.randint(0, (1 << data_width // 8) - 1) for _ in range(_len + 1)]
+    else:
+        data_req['strbs'] = [strb for _ in range(_len + 1)]
     data_req['wid'] = addr_req['id']
     return addr_req, data_req
 
@@ -147,12 +156,18 @@ def gen_rand_read(**kws):
 
 class AXIWritePair(Elaboratable):
     def __init__(self, axi, in_buffered, out_buffered, align_address,
-                 use_cache=False, use_lock=False, use_size=False, use_user=False):
+                 use_cache=False, use_lock=False, use_size=False, use_user=False,
+                 const_id=None, const_size=None, const_len=None, const_burst=None,
+                 const_strb=None):
         self.master = AXIMasterWriteIFace(axi, align_address=align_address,
                                           in_buffered=in_buffered,
                                           out_buffered=out_buffered,
-                                          use_cache=use_cache, use_lock=use_lock,
-                                          use_user=use_user)
+                                          const_cache=None if use_cache else 0,
+                                          const_lock=None if use_lock else 0,
+                                          const_user=None if use_user else 0,
+                                          const_id=const_id, const_size=const_size,
+                                          const_len=const_len, const_burst=const_burst,
+                                          const_strb=const_strb)
         self.slave = AXISlaveWriteIFace(axi, align_address=align_address,
                                         in_buffered=in_buffered,
                                         out_buffered=out_buffered,
@@ -183,12 +198,16 @@ class AXIWritePair(Elaboratable):
 
 class AXIReadPair(Elaboratable):
     def __init__(self, axi, in_buffered, out_buffered, align_address,
-                 use_cache=False, use_lock=False, use_size=False, use_user=False):
+                 use_cache=False, use_lock=False, use_size=False, use_user=False,
+                 const_id=None, const_size=None, const_len=None, const_burst=None):
         self.master = AXIMasterReadIFace(axi, align_address=align_address,
                                          in_buffered=in_buffered,
                                          out_buffered=out_buffered,
-                                         use_cache=use_cache, use_lock=use_lock,
-                                         use_user=use_user)
+                                         const_cache=None if use_cache else 0,
+                                         const_lock=None if use_lock else 0,
+                                         const_user=None if use_user else 0,
+                                         const_id=const_id, const_size=const_size,
+                                         const_len=const_len, const_burst=const_burst)
         self.slave = AXISlaveReadIFace(axi, align_address=align_address,
                                        in_buffered=in_buffered,
                                        out_buffered=out_buffered,
@@ -389,6 +408,99 @@ class TestAXIWrite(TestCaseWithSimulator):
     @pytest.mark.parametrize("out_buffered", [False, True])
     @pytest.mark.parametrize("align_address", [False, True])
     @pytest.mark.parametrize("AXI", [AXI3, AXI4])
+    @pytest.mark.parametrize("const_id", [None, 5])
+    @pytest.mark.parametrize("const_size", [None, 1])
+    @pytest.mark.parametrize("const_len", [None, 0, 2])
+    @pytest.mark.parametrize("const_burst", [None, 0, 1])
+    @pytest.mark.parametrize("const_strb", [None, 3])
+    def test_request_const(self, in_buffered, out_buffered, align_address,
+                           const_id, const_size, const_len, const_burst,
+                           const_strb, AXI):
+        data_width = 32
+        addr_width = 32
+        id_width = 3
+        axi = AXI(data_width, addr_width, id_width).create()
+        len_width = len(axi.AWLEN)
+        writer = AXIWritePair(axi, in_buffered, out_buffered, align_address,
+                              const_id=const_id, const_size=const_size,
+                              const_len=const_len, const_burst=const_burst,
+                              const_strb=const_strb)
+
+        requests = []
+
+        const_last = 1 if const_len is not None and const_len == 0 else None
+
+        async def producer(sim):
+            for _ in range(2):
+                addr_req, data_req = gen_rand_write(data_width=data_width,
+                                                    addr_width=addr_width,
+                                                    id_width=id_width,
+                                                    len_width=len_width,
+                                                    id=const_id,
+                                                    size=const_size,
+                                                    len=const_len,
+                                                    burst=const_burst,
+                                                    strb=const_strb)
+                datas = data_req['datas']
+                strbs = data_req['strbs']
+                _len = addr_req['len']
+                requests.extend(decode_write(data_width=data_width,
+                                             align_address=align_address,
+                                             **addr_req, **data_req))
+
+                widkw = {}
+                if AXI is AXI3 and const_id is None:
+                    widkw['id'] = data_req['wid']
+
+                if const_id is not None:
+                    del addr_req['id']
+                if const_size is not None:
+                    del addr_req['size']
+                if const_len is not None:
+                    del addr_req['len']
+                if const_burst is not None:
+                    del addr_req['burst']
+
+                data_arg0 = dict(data=datas[0], strb=strbs[0],
+                                 last=int(_len == 0), **widkw)
+                if const_strb is not None:
+                    del data_arg0['strb']
+                if const_last is not None:
+                    del data_arg0['last']
+                addr_res, data_res = await CallTrigger(sim) \
+                  .call(writer.addr_request, **addr_req) \
+                  .call(writer.data_request, **data_arg0)
+                assert addr_res is not None
+                assert data_res is not None
+
+                for i in range(_len):
+                    data_arg = dict(data=datas[i + 1], strb=strbs[i + 1],
+                                    last=int(i == _len - 1), **widkw)
+                    if const_strb is not None:
+                        del data_arg['strb']
+                    if const_last is not None:
+                        del data_arg['last']
+                    assert (await writer.data_request.call_try(
+                        sim, **data_arg)) is not None
+
+        def check_reply(reply):
+            assert reply is not None
+            expected = requests.pop(0)
+            assert struct_to_dict(reply) == expected
+
+        async def consumer(sim):
+            check_reply(await writer.get_request.call(sim))
+            while requests:
+                check_reply(await writer.get_request.call_try(sim))
+
+        with self.run_simulation(writer) as sim:
+            sim.add_testbench(producer)
+            sim.add_testbench(consumer)
+
+    @pytest.mark.parametrize("in_buffered", [False, True])
+    @pytest.mark.parametrize("out_buffered", [False, True])
+    @pytest.mark.parametrize("align_address", [False, True])
+    @pytest.mark.parametrize("AXI", [AXI3, AXI4])
     @pytest.mark.parametrize("maxwait", [2, 6])
     def test_random(self, in_buffered, out_buffered, align_address, AXI, maxwait):
         data_width = 32
@@ -569,12 +681,72 @@ class TestAXIRead(TestCaseWithSimulator):
                                          len_width=len_width,
                                          cache_width=cache_width,
                                          lock_width=lock_width,
-                                             user_width=user_width)
+                                         user_width=user_width)
                 requests.extend(decode_read(data_width=data_width,
                                             align_address=align_address,
                                             use_cache=use_cache, use_lock=use_lock,
                                             use_size=use_size, use_user=use_user,
                                             **addr_req))
+                assert (await reader.request.call(sim, **addr_req)) is not None
+
+        def check_reply(reply):
+            assert reply is not None
+            expected = requests.pop(0)
+            assert struct_to_dict(reply) == expected
+
+        async def consumer(sim):
+            check_reply(await reader.get_request.call(sim))
+            while requests:
+                check_reply(await reader.get_request.call_try(sim))
+
+        with self.run_simulation(reader) as sim:
+            sim.add_testbench(producer)
+            sim.add_testbench(consumer)
+
+    @pytest.mark.parametrize("in_buffered", [False, True])
+    @pytest.mark.parametrize("out_buffered", [False, True])
+    @pytest.mark.parametrize("align_address", [False, True])
+    @pytest.mark.parametrize("AXI", [AXI3, AXI4])
+    @pytest.mark.parametrize("const_id", [None, 5])
+    @pytest.mark.parametrize("const_size", [None, 1])
+    @pytest.mark.parametrize("const_len", [None, 0, 2])
+    @pytest.mark.parametrize("const_burst", [None, 0, 1])
+    def test_read_request_const(self, in_buffered, out_buffered, align_address,
+                                const_id, const_size, const_len,
+                                const_burst, AXI):
+        data_width = 32
+        addr_width = 32
+        id_width = 3
+        axi = AXI(data_width, addr_width, id_width).create()
+        len_width = len(axi.ARLEN)
+        reader = AXIReadPair(axi, in_buffered, out_buffered, align_address,
+                             const_id=const_id, const_size=const_size,
+                             const_len=const_len, const_burst=const_burst)
+
+        requests = []
+
+        async def producer(sim):
+            for _ in range(2):
+                addr_req = gen_rand_read(data_width=data_width,
+                                         addr_width=addr_width,
+                                         id_width=id_width,
+                                         len_width=len_width,
+                                         id=const_id,
+                                         size=const_size,
+                                         len=const_len,
+                                         burst=const_burst)
+                requests.extend(decode_read(data_width=data_width,
+                                            align_address=align_address,
+                                            **addr_req))
+
+                if const_id is not None:
+                    del addr_req['id']
+                if const_size is not None:
+                    del addr_req['size']
+                if const_len is not None:
+                    del addr_req['len']
+                if const_burst is not None:
+                    del addr_req['burst']
                 assert (await reader.request.call(sim, **addr_req)) is not None
 
         def check_reply(reply):
