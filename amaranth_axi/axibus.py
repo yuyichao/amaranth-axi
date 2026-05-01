@@ -108,7 +108,7 @@ class AXI(_Base):
             if is_slave:
                 m.d.comb += port[:min_w].eq(new_port[:min_w])
             else:
-                m.d.comb += port[:min_w].eq(port[:min_w])
+                m.d.comb += new_port[:min_w].eq(port[:min_w])
                 if width > min_w:
                     m.d.comb += new_port[min_w:].eq(Const(0, width - min_w))
             return new_port
