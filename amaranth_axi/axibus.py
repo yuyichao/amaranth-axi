@@ -4,8 +4,11 @@ from amaranth import *
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
+def _default_len_width(version):
+    return 8 if version == 4 else 4
+
 def _get_axi_ports(data_width, addr_width, id_width, user_width,
-                   resp_width, version, lite, len_width=None):
+                   resp_width, version, lite, len_width):
     pins = {
         'ARADDR': Out(addr_width),
         'ARPROT': Out(3),
@@ -31,9 +34,9 @@ def _get_axi_ports(data_width, addr_width, id_width, user_width,
         'WSTRB': Out(data_width // 8),
         'WVALID': Out(1),
     }
-    if not lite:
-        if len_width is None:
-            len_width = 8 if version == 4 else 4
+    if lite:
+        assert len_width is None
+    else:
         pins.update({
             "ARBURST": Out(2),
             "ARCACHE": Out(4),
@@ -110,7 +113,7 @@ class AXI(_Base):
                     m.d.comb += new_port[min_w:].eq(Const(0, width - min_w))
             return new_port
 
-        def cast(self, m, addr_width=None, user_width=None, src_loc_at=0):
+        def cast(self, m, addr_width=None, user_width=None, len_width=None, src_loc_at=0):
             old_sig = self.signature
             if user_width is None:
                 user_width = old_sig.user_width
@@ -118,10 +121,15 @@ class AXI(_Base):
                 assert old_sig.axi_version == 4 and not old_sig.is_lite
             if addr_width is None:
                 addr_width = old_sig.addr_width
-            if addr_width == old_sig.addr_width and user_width == old_sig.user_width:
+            if len_width is None:
+                len_width = old_sig._len_width
+            if addr_width == old_sig.addr_width and user_width == old_sig.user_width and len_width == old_sig._len_width:
                 return self
             sig = AXI(old_sig.data_width, addr_width, old_sig.id_width, user_width,
-                      version=old_sig.axi_version, lite=old_sig.is_lite)
+                      version=old_sig.axi_version, lite=old_sig.is_lite,
+                      len_width=len_width)
+            if len_width is None:
+                len_width = _default_len_width(version)
             is_slave = old_sig.is_slave
             if is_slave:
                 sig = sig.flip()
@@ -135,6 +143,8 @@ class AXI(_Base):
                     port = self._cast_signal(m, name, port, addr_width, is_slave)
                 elif name == 'ARUSER' or name == 'AWUSER':
                     port = self._cast_signal(m, name, port, user_width, is_slave)
+                elif name == 'ARLEN' or name == 'AWLEN':
+                    port = self._cast_signal(m, name, port, len_width, is_slave)
                 setattr(new_iface, name, port)
             return new_iface
 
@@ -149,9 +159,16 @@ class AXI(_Base):
         self._user_width = user_width
         self._version = version
         self._lite = lite
-        self._len_width = len_width
+        def_len = _default_len_width(version)
+        if len_width is not None:
+            assert not lite
+        if len_width is None or len_width == def_len:
+            len_width = None if lite else def_len
+            self._len_width = None
+        else:
+            self._len_width = len_width
         super().__init__(_get_axi_ports(data_width, addr_width, id_width, user_width,
-                         2, version, lite, len_width=len_width))
+                         2, version, lite, len_width))
 
     def __repr__(self):
         if self._version == 4:
@@ -265,7 +282,7 @@ class ACE(_Base):
         self._user_width = user_width
         self._lite = lite
         ports = _get_axi_ports(data_width, addr_width, id_width, user_width,
-                               2 if lite else 4, 4, False)
+                               2 if lite else 4, 4, False, _default_len_width(4))
         ports.update({
             'ARSNOOP': Out(4),
             'ARDOMAIN': Out(2),
