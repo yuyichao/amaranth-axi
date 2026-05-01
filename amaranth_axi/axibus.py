@@ -129,7 +129,7 @@ class AXI(_Base):
                       version=old_sig.axi_version, lite=old_sig.is_lite,
                       len_width=len_width)
             if len_width is None:
-                len_width = _default_len_width(version)
+                len_width = _default_len_width(sig.axi_version)
             is_slave = old_sig.is_slave
             if is_slave:
                 sig = sig.flip()
