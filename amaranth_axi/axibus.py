@@ -59,6 +59,12 @@ def _get_axi_ports(data_width, addr_width, id_width, user_width,
 
             "WLAST": Out(1),
         })
+        if user_width != 0:
+            pins.update({
+                "ARUSER": Out(user_width),
+                "AWUSER": Out(user_width),
+                # "BUSER": In(user_width)
+            })
         if version == 4:
             pins.update({
                 "ARQOS": Out(4),
@@ -67,12 +73,6 @@ def _get_axi_ports(data_width, addr_width, id_width, user_width,
                 "AWQOS": Out(4),
                 # "AWREGION": Out(4),
             })
-            if user_width != 0:
-                pins.update({
-                    "ARUSER": Out(user_width),
-                    "AWUSER": Out(user_width),
-                    # "BUSER": In(user_width)
-                })
         else:
             pins.update({
                 "WID": Out(id_width),
@@ -118,7 +118,7 @@ class AXI(_Base):
             if user_width is None:
                 user_width = old_sig.user_width
             elif user_width != 0:
-                assert old_sig.axi_version == 4 and not old_sig.is_lite
+                assert not old_sig.is_lite
             if addr_width is None:
                 addr_width = old_sig.addr_width
             if len_width is None:
@@ -151,7 +151,7 @@ class AXI(_Base):
     def __init__(self, data_width, addr_width, id_width=0, user_width=0, *,
                  version, lite, len_width=None):
         assert version in [3, 4]
-        if lite or user_width != 0:
+        if lite:
             assert version != 3
         self._data_width = data_width
         self._addr_width = addr_width
@@ -181,10 +181,12 @@ class AXI(_Base):
             return f'axibus.AXI4({self._data_width}, {self._addr_width}, {self._id_width}, {self._user_width})'
         assert self._version == 3
         assert not self._lite
-        assert self._user_width == 0
+        extra = ''
         if self._len_width is not None:
-            return f'axibus.AXI3({self._data_width}, {self._addr_width}, {self._id_width}, len_width={self._len_width})'
-        return f'axibus.AXI3({self._data_width}, {self._addr_width}, {self._id_width})'
+            extra = extra + f', len_width={self._len_width}'
+        if self._user_width != 0:
+            extra = extra + f', user_width={self._user_width}'
+        return f'axibus.AXI3({self._data_width}, {self._addr_width}, {self._id_width}{extra})'
 
     def __eq__(self, other):
         return (type(self) is type(other) and
@@ -227,8 +229,8 @@ class AXI(_Base):
     def is_slave(self):
         return isinstance(self, wiring.FlippedSignature)
 
-def AXI3(data_width, addr_width, id_width, *, len_width=None):
-    return AXI(data_width, addr_width, id_width, 0, version=3, lite=False, len_width=len_width)
+def AXI3(data_width, addr_width, id_width, *, len_width=None, user_width=0):
+    return AXI(data_width, addr_width, id_width, user_width, version=3, lite=False, len_width=len_width)
 
 def AXI4(data_width, addr_width, id_width, user_width=0, *, len_width=None):
     return AXI(data_width, addr_width, id_width, user_width, version=4, lite=False, len_width=len_width)
