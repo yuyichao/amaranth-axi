@@ -488,7 +488,7 @@ class AXIMasterWriteIFace(Elaboratable):
         add_opt_field(wa_data, 'lock', self._const_lock, axi.AWLOCK)
         if hasattr(axi, 'AWUSER'):
             add_opt_field(wa_data, 'user', self._const_user, axi.AWUSER)
-        elif (self._const_user is not None) and self._const_user != 0:
+        elif (self._const_user is None) or self._const_user != 0:
             raise TypeError("Missing USER signal on AXI port")
 
         m.submodules.wa_adapt = wa_adapt = OutAdaptor.from_signal(
@@ -600,7 +600,7 @@ class AXIMasterReadIFace(Elaboratable):
         add_opt_field(ra_data, 'lock', self._const_lock, axi.ARLOCK)
         if hasattr(axi, 'ARUSER'):
             add_opt_field(ra_data, 'user', self._const_user, axi.ARUSER)
-        elif (self._const_user is not None) and self._const_user != 0:
+        elif (self._const_user is None) or self._const_user != 0:
             raise TypeError("Missing USER signal on AXI port")
 
         m.submodules.ra_adapt = ra_adapt = OutAdaptor.from_signal(
