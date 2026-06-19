@@ -1,7 +1,7 @@
 #
 
 from amaranth import *
-from amaranth.lib.data import StructLayout, View
+from amaranth.lib.data import StructLayout, View, Struct
 
 from pathlib import Path
 
@@ -30,14 +30,18 @@ def cast_to_width(s, width, allow_trunc=False):
         return Cat(s, Signal(width - l))
 
 def StructCat(layout=None, /, **kws):
+    view = lambda s: View(layout, s)
     if layout is None:
         fields = dict()
         for (k, v) in kws.items():
             fields[k] = v.shape()
         layout = StructLayout(fields)
+    elif isinstance(layout, type) and issubclass(layout, Struct):
+        view = layout
+        layout = layout.as_shape()
 
     signals = []
     for (k, v) in kws.items():
         signals.append(cast_to_width(v, Shape.cast(layout.members[k]).width))
 
-    return View(layout, Cat(signals))
+    return view(Cat(signals))
